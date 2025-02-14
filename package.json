@@ -1,0 +1,26 @@
+{
+    "name": "@betterdiscord/analyzer",
+    "version": "1.0.0",
+    "description": "no",
+    "main": "downloadall.js",
+    "scripts": {
+        "test": "echo \"Error: no test specified\" && exit 1",
+        "download": "node ./downloadall.js",
+        "download-themes": "node ./downloadthemes.js",
+        "analyze": "node ./analyze.js",
+        "analyze-themes": "node ./analyzethemes.js",
+        "clear": "rm -rf repos"
+    },
+    "author": "",
+    "license": "Apache-2.0",
+    "dependencies": {
+        "request": "^2.88.2"
+    },
+    "devDependencies": {
+        "@types/eslint": "^9.6.1",
+        "eslint": "^9.20.1",
+        "globals": "^15.15.0",
+        "typescript-eslint": "^8.24.0"
+    },
+    "type": "module"
+}
