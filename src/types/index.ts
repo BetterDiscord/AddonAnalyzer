@@ -1,4 +1,4 @@
-export interface Addon {
+export interface APIAddon {
     id: number;
     name: string;
     file_name: string;
@@ -36,4 +36,21 @@ export interface Guild {
 export enum Type {
     Plugin = "plugin",
     Theme = "theme",
+}
+
+export interface CachedAddon {
+    file_name: AddonFilename;
+    author: string;
+    type: Type;
+    file_content: string;
+}
+
+export type AddonFilename = `${string}.plugin.js` | `${string}.theme.css`;
+
+export type Results = Record<string, string | number> | number | boolean | string[];
+
+export interface Analysis {
+    key: string;
+    types: Type[];
+    run(addon: CachedAddon): Results;
 }

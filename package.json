@@ -14,7 +14,7 @@
     "author": "",
     "license": "Apache-2.0",
     "dependencies": {
-        "request": "^2.88.2"
+        "ky": "^1.7.5"
     },
     "devDependencies": {
         "@types/bun": "^1.2.2",
