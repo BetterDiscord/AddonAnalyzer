@@ -1,19 +1,13 @@
-const fs = require("fs");
-const path = require("path");
+import fs from "fs";
+import path from "path";
 
-// const bdGlobals = ["BDV2", "pluginModule", "PluginModule", "themeModule", "ThemeModule", "Utils", "BDEvents", "settingsPanel", "DataStore", "emoteModule", "EmoteModule",
-//                    "ContentManager", "ClassNormalizer", "mainCore", "Core", "V2C", "minimumDiscordVersion", "currentDiscordVersion", "minSupportedVersion", "bbdVersion",
-//                    "bbdChangelog", "window.settings", "defaultCookie", "settingsCookie", "bdpluginErrors", "bdthemeErrors", "bdConfig", "bemotes", "emotesFfz", "emotesBTTV",
-//                    "emotesBTTV2", "emotesTwitch", "subEmotesTwitch", "bdEmotes", "bdEmoteSettingIDs", "bdthemes", "bdplugins", "pluginCookie", "themeCookie", "$(",
-//                    "module.exports", "da-"];
-
-const bdGlobals = ["ZeresPluginLibrary"];
+const bdGlobals = [".da-"];
 
 
 
 const data = {};
 
-const reposPath = path.resolve(__dirname, "repos");
+const reposPath = path.resolve(__dirname, "themes");
 const authors = fs.readdirSync(reposPath);
 let total = 0;
 for (const author of authors) {
@@ -22,20 +16,19 @@ for (const author of authors) {
     console.log("Processing plugins by: " + author);
 
     let authorCount = 0;
-    const plugins = fs.readdirSync(path.resolve(reposPath, author));
-    for (const plugin of plugins) {
-        if (!plugin.endsWith(".plugin.js")) continue;
-        if (plugin == "repo.txt" || plugin == "results.json") continue;
-        if (!data[author][plugin]) data[author][plugin] = [];
-        const string = fs.readFileSync(path.resolve(reposPath, author, plugin)).toString();
-        let pluginCount = 0;
+    const themes = fs.readdirSync(path.resolve(reposPath, author));
+    for (const theme of themes) {
+        if (theme == "repo.txt" || theme == "results.json") continue;
+        if (!data[author][theme]) data[author][theme] = [];
+        const string = fs.readFileSync(path.resolve(reposPath, author, theme)).toString();
+        let themeCount = 0;
         for (const bdGlobal of bdGlobals) {
             if (!string.includes(bdGlobal)) continue;
-            data[author][plugin].push(bdGlobal);
-            pluginCount++;
+            data[author][theme].push(bdGlobal);
+            themeCount++;
         }
-        console.log(plugin + ": " + pluginCount);
-        authorCount = authorCount + pluginCount;
+        console.log(theme + ": " + themeCount);
+        authorCount = authorCount + themeCount;
     }
     data[author].count = authorCount;
     console.log("Total: " + authorCount);
@@ -49,7 +42,7 @@ for (const author of authors) {
 data.count = total;
 fs.writeFileSync(path.resolve(reposPath, "results.json"), JSON.stringify(data, null, 4));
 
-console.log("Found a total of " + total + " globals used.");
+console.log("Found a total of " + total + " normalized classes used.");
 
 
 

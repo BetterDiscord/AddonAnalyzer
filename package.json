@@ -17,6 +17,7 @@
         "request": "^2.88.2"
     },
     "devDependencies": {
+        "@types/bun": "^1.2.2",
         "@types/eslint": "^9.6.1",
         "eslint": "^9.20.1",
         "globals": "^15.15.0",

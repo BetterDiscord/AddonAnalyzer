@@ -1,6 +1,6 @@
-const fs = require("fs");
-const path = require("path");
-const request = require("request");
+import fs from "fs";
+import path from "path";
+import request from "request";
 
 const listUrl = "https://api.betterdiscord.app/v1/store/themes";
 
@@ -8,7 +8,7 @@ const listUrl = "https://api.betterdiscord.app/v1/store/themes";
 
 (async () => {
 
-    const themeList = await new Promise(resolve => {request.get(listUrl, (err,resp,body) => {resolve(JSON.parse(body));});});
+    const themeList = await new Promise(resolve => {request.get(listUrl, (err, resp, body) => {resolve(JSON.parse(body));});});
     themeList.sort((a, b) => a.author.display_name.localeCompare(b.author.display_name));
     fs.writeFileSync(path.resolve(__dirname, "ThemeList.json"), JSON.stringify(themeList, null, 4));
     if (!fs.existsSync(path.resolve(__dirname, "themes"))) fs.mkdirSync(path.resolve(__dirname, "themes"));

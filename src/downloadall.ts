@@ -1,6 +1,7 @@
-const fs = require("fs");
-const path = require("path");
-const request = require("request");
+import fs from "fs";
+import path from "path";
+import request from "request";
+import type {Addon} from "./types";
 
 const listUrl = "https://api.betterdiscord.app/v3/store/plugins";
 
@@ -8,14 +9,14 @@ const listUrl = "https://api.betterdiscord.app/v3/store/plugins";
 
 (async () => {
 
-    const pluginList = await new Promise(resolve => {request.get(listUrl, (err,resp,body) => {resolve(JSON.parse(body));});});
+    const pluginList: Addon[] = await new Promise(resolve => {request.get(listUrl, (_, __, body: string) => {resolve(JSON.parse(body));});});
     pluginList.sort((a, b) => a.author.display_name.localeCompare(b.author.display_name));
     fs.writeFileSync(path.resolve(__dirname, "PluginList.json"), JSON.stringify(pluginList, null, 4));
     if (!fs.existsSync(path.resolve(__dirname, "repos"))) fs.mkdirSync(path.resolve(__dirname, "repos"));
 
-    let lastUser = null;
-    let authorPath = null;
-    let metaFile = null;
+    let lastUser: string = "";
+    let authorPath: string = "";
+    let metaFile: string = "";
     for (const plugin of pluginList) {
         const url = plugin.latest_source_url;
         if (!url) continue;
@@ -36,7 +37,7 @@ const listUrl = "https://api.betterdiscord.app/v3/store/plugins";
 
         const downloadUrl = url.replace("github.com", "raw.githubusercontent.com").replace("blob/", "");
         await new Promise(resolve => {
-            request.get(downloadUrl, (err, resp, body) => {
+            request.get(downloadUrl, (err, resp, body: string) => {
                 if (err) return console.log(err);
                 fs.writeFileSync(path.resolve(authorPath, filename), body);
                 resolve();

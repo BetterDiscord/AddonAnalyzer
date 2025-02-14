@@ -2,14 +2,13 @@ import js from "@eslint/js";
 import ts from "typescript-eslint";
 import globals from "globals";
 
-/** @type {import('eslint').Linter.Config[]} */
+/** @type {import("eslint").Linter.Config[]} */
 export default [
     js.configs.recommended,
     ...ts.configs.recommended,
     {
         languageOptions: {
             globals: {
-                ...globals.browser,
                 ...globals.node
             }
         }
@@ -32,7 +31,7 @@ export default [
             "new-cap": ["error", {newIsCap: true}],
             "no-array-constructor": "error",
             "no-caller": "error",
-            "no-console": "error",
+            // "no-console": "error",
             "no-duplicate-imports": "error",
             "no-else-return": "error",
             "no-eval": "error",
