@@ -47,10 +47,10 @@ export interface CachedAddon {
 
 export type AddonFilename = `${string}.plugin.js` | `${string}.theme.css`;
 
-export type Results = Record<string, string | number> | number | boolean | string[];
+export type Results = Record<string, number> | number | boolean | string[];
 
 export interface Analysis {
     key: string;
     types: Type[];
-    run(addon: CachedAddon): Results;
+    run(addon: CachedAddon): Promise<Results> | Results;
 }

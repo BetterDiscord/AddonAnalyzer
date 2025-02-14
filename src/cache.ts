@@ -49,7 +49,7 @@ async function ensureDirs() {
 const API_URL = "https://api.betterdiscord.app/v3/store/addons";
 
 export async function update() {
-    if (!isInvalid()) return;
+    if (!(await isInvalid())) return;
     await ensureDirs();
 
     const addons: APIAddon[] = await ky.get(API_URL).json();

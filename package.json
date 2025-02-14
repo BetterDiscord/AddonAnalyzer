@@ -1,15 +1,11 @@
 {
-    "name": "@betterdiscord/analyzer",
+    "name": "@betterdiscord/addonanalyzer",
     "version": "1.0.0",
     "description": "no",
     "main": "downloadall.js",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
-        "download": "node ./downloadall.js",
-        "download-themes": "node ./downloadthemes.js",
-        "analyze": "node ./analyze.js",
-        "analyze-themes": "node ./analyzethemes.js",
-        "clear": "rm -rf repos"
+        "analyze": "bun run src/index.ts",
+        "clear": "rm -rf .cache"
     },
     "author": "",
     "license": "Apache-2.0",
