@@ -110,6 +110,27 @@ export const patcherTargets: Analysis = {
     run: (addon) => countBy(addon, "patcher-targets", f => String(f.details?.method))
 };
 
+// Node/Electron environment reach, keyed by root plus one segment (process.env, Buffer.from)
+export const globals: Analysis = {
+    key: "globals",
+    types: [Type.Plugin],
+    run: (addon) => countBy(addon, "globals", f => String(f.details?.global))
+};
+
+// Legacy ReactDOM entry points plus createRoot adoption, keyed by method
+export const reactHazards: Analysis = {
+    key: "react-hazards",
+    types: [Type.Plugin],
+    run: (addon) => countBy(addon, "react-hazards", f => String(f.details?.method))
+};
+
+// Hashed Discord class names hardcoded in source; a per-addon fragility count
+export const classLiterals: Analysis = {
+    key: "class-literals",
+    types: [Type.Plugin, Type.Theme],
+    run: (addon) => getFindings(addon).filter(f => f.rule === "class-literals").length
+};
+
 // Presence flags (not raw counts), so the summary reads as "addons exhibiting this signal"
 export const obfuscationSignals: Analysis = {
     key: "obfuscation-signals",

@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import {isHazardMethod} from "./ast/rules/reacthazards";
 import {DYNAMIC_SEGMENT} from "./ast/rules/remoteurls";
 import {cacheFolder, resultsFolder} from "./constants";
 
@@ -35,6 +36,10 @@ interface ReportData {
     namespaces: Array<{name: string, calls: number, plugins: number}>;
     apis: Array<{api: string, calls: number, plugins: number}>;
     requires: Array<{module: string, calls: number, plugins: string[]}>;
+    globals: Array<{name: string, calls: number, plugins: number}>;
+    reactHazards: Array<{method: string, calls: number, plugins: number, hazard: boolean}>;
+    fragile: Array<{name: string, tokens: number, type: "plugin" | "theme"}>;
+    fragileAddons: number;
     webpackTargets: Array<{kind: string, value: string, calls: number, plugins: number}>;
     patcherTargets: Array<{method: string, calls: number, plugins: number}>;
     hosts: Record<"network-urls" | "css-urls" | "remote-urls", Array<{host: string, refs: number, addons: number}>>;
@@ -58,6 +63,9 @@ async function assemble(): Promise<ReportData> {
     const dynamicPlugins = new Map<string, number>();
     const webpackPlugins = new Map<string, number>();
     const patcherPlugins = new Map<string, number>();
+    const globalPlugins = new Map<string, number>();
+    const reactPlugins = new Map<string, number>();
+    const fragile: ReportData["fragile"] = [];
     const flagged: Array<{name: string, signals: string[]}> = [];
 
     for (const author of Object.keys(addons)) {
@@ -93,6 +101,16 @@ async function assemble(): Promise<ReportData> {
             for (const method of Object.keys(asRecord(results["patcher-targets"]))) {
                 patcherPlugins.set(method, (patcherPlugins.get(method) ?? 0) + 1);
             }
+            for (const global of Object.keys(asRecord(results.globals))) {
+                globalPlugins.set(global, (globalPlugins.get(global) ?? 0) + 1);
+            }
+            for (const method of Object.keys(asRecord(results["react-hazards"]))) {
+                reactPlugins.set(method, (reactPlugins.get(method) ?? 0) + 1);
+            }
+            const tokens = results["class-literals"];
+            if (typeof tokens === "number" && tokens > 0) {
+                fragile.push({name, tokens, type: file.endsWith(".plugin.js") ? "plugin" : "theme"});
+            }
             if (results["obfuscated-plugins"] === true) {
                 flagged.push({name, signals: Object.keys(asRecord(results["obfuscation-signals"]))});
             }
@@ -126,6 +144,8 @@ async function assemble(): Promise<ReportData> {
             .sort((a, b) => b.addons - a.addons || b.refs - a.refs);
     }
 
+    const globalCalls = asRecord(summary.globals);
+    const reactCalls = asRecord(summary["react-hazards"]);
     const injection = asRecord(summary["html-injection"]);
     const dynamic = asRecord(summary["dynamic-code"]);
     const signals = asRecord(summary["obfuscation-signals"]);
@@ -149,6 +169,14 @@ async function assemble(): Promise<ReportData> {
         requires: Object.entries(requireCalls)
             .map(([module, calls]) => ({module, calls, plugins: (requirePlugins.get(module) ?? []).sort()}))
             .sort((a, b) => b.plugins.length - a.plugins.length),
+        globals: Object.entries(globalCalls)
+            .map(([name, calls]) => ({name, calls, plugins: globalPlugins.get(name) ?? 0}))
+            .sort((a, b) => b.plugins - a.plugins || b.calls - a.calls),
+        reactHazards: Object.entries(reactCalls)
+            .map(([method, calls]) => ({method, calls, plugins: reactPlugins.get(method) ?? 0, hazard: isHazardMethod(method)}))
+            .sort((a, b) => Number(b.hazard) - Number(a.hazard) || b.plugins - a.plugins),
+        fragile: fragile.sort((a, b) => b.tokens - a.tokens),
+        fragileAddons: fragile.length,
         webpackTargets: Object.entries(webpackCalls)
             .map(([key, calls]) => {
                 const split = key.indexOf(":");
@@ -198,6 +226,20 @@ function targetTable(rows: Array<{label: string, chip?: string, calls: number, p
         ? `</tbody></table><details><summary>Show ${rest.length} more</summary><table><tbody>${rest.map(row).join("")}</tbody></table></details>`
         : "</tbody></table>";
     return head + shown + tail || `<p class="muted">none found</p>`;
+}
+
+// Addons ranked by hardcoded-class count, worst first
+function fragileTable(rows: ReportData["fragile"], visible = 15): string {
+    if (!rows.length) return `<p class="muted">none found</p>`;
+    const max = rows[0]?.tokens ?? 0;
+    const row = (r: ReportData["fragile"][number]) =>
+        `<tr><td>${escapeHtml(r.name)} <span class="chip">${r.type}</span></td><td class="bar-cell">${bar(r.tokens, max)}</td><td class="num">${fmt(r.tokens)}</td></tr>`;
+    const head = `<table><thead><tr><th>Addon</th><th></th><th class="num">Hardcoded classes</th></tr></thead><tbody>`;
+    const rest = rows.slice(visible);
+    const tail = rest.length
+        ? `</tbody></table><details><summary>Show ${rest.length} more</summary><table><tbody>${rest.map(row).join("")}</tbody></table></details>`
+        : "</tbody></table>";
+    return head + rows.slice(0, visible).map(row).join("") + tail;
 }
 
 function render(d: ReportData): string {
@@ -273,15 +315,28 @@ footer ul { padding-left: 18px; }
     <div class="tile"><div class="label">Legacy API uses</div><div class="value">${fmt(d.deprecatedUses)}</div><div class="delta${d.deprecatedUses === 0 ? " good" : ""}">${d.deprecatedUses === 0 ? "&#10003; old-old APIs are gone" : "see bdapi table"}</div></div>
     <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(new Set(d.requires.flatMap(r => r.plugins)).size)}</div><div class="delta">plugins on the polyfill</div></div>
     <div class="tile"><div class="label">Flagged for review</div><div class="value">${fmt(d.flagged.length)}</div><div class="delta">bundled / packed code</div></div>
+    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(d.fragileAddons)}</div><div class="delta">addons breaking on class churn</div></div>
 </div>
 
 <div class="card">
-    <h2>require() usage — polyfill retirement list</h2>
-    <p class="note">BetterDiscord has no real <code>require</code>; these modules are served by the polyfill. Each list names the plugins to migrate before it can be removed.</p>
+    <h2>Environment coupling — polyfill retirement list</h2>
+    <p class="note">What plugins reach for outside the addon sandbox: modules served by BD's <code>require</code> polyfill, and the Node/Electron globals they touch directly. Both retire the same way &mdash; each list names the plugins to migrate first.</p>
     <table><thead><tr><th>Module</th><th></th><th class="num">Plugins</th><th class="num">Calls</th></tr></thead><tbody>
-    ${d.requires.map(r => `<tr><td><code>${escapeHtml(r.module)}</code></td><td class="bar-cell">${bar(r.plugins.length, d.requires[0]?.plugins.length ?? 0)}</td><td class="num">${fmt(r.plugins.length)}</td><td class="num muted">${fmt(r.calls)}</td></tr>
+    ${d.requires.map(r => `<tr><td><code>require("${escapeHtml(r.module)}")</code></td><td class="bar-cell">${bar(r.plugins.length, d.requires[0]?.plugins.length ?? 0)}</td><td class="num">${fmt(r.plugins.length)}</td><td class="num muted">${fmt(r.calls)}</td></tr>
     <tr><td colspan="4" style="border-bottom:1px solid var(--hairline)"><details><summary>Plugins requiring <code>${escapeHtml(r.module)}</code></summary><ul>${r.plugins.map(p => `<li>${escapeHtml(p)}</li>`).join("")}</ul></details></td></tr>`).join("")}
     </tbody></table>
+    <div class="cols" style="margin-top:18px">
+        <div>
+            <h2>Node/Electron globals</h2>
+            <p class="note">Direct access to the bridged environment, shown as root plus one segment. A file that binds one of these names locally (<code>function f(process)</code>) is skipped entirely rather than guessed at, so these are floor values.</p>
+            ${targetTable(d.globals.map(g => ({label: g.name, calls: g.calls, plugins: g.plugins})), "Global", 15)}
+        </div>
+        <div>
+            <h2>React-upgrade hazards</h2>
+            <p class="note">Entry points that break when Discord bumps React: <code>render</code>, <code>findDOMNode</code> and <code>unmountComponentAtNode</code> were removed in React 19, <code>hydrate</code> in 18. <code>createRoot</code> is the opposite signal &mdash; plugins already on the modern root API.</p>
+            ${targetTable(d.reactHazards.map(r => ({label: r.method, chip: r.hazard ? "hazard" : "modern", calls: r.calls, plugins: r.plugins})), "Method", 15)}
+        </div>
+    </div>
 </div>
 
 <div class="card">
@@ -305,6 +360,12 @@ footer ul { padding-left: 18px; }
         <div><h2>Webpack lookup targets</h2>${targetTable(d.webpackTargets.map(t => ({label: t.value, chip: t.kind, calls: t.calls, plugins: t.plugins})), "Target")}</div>
         <div><h2>Patched methods</h2>${targetTable(d.patcherTargets.map(t => ({label: t.method, calls: t.calls, plugins: t.plugins})), "Method")}</div>
     </div>
+</div>
+
+<div class="card">
+    <h2>Hardcoded Discord class names</h2>
+    <p class="note">Discord ships hashed CSS classes in two styles &mdash; <code>wrapper_a1b2c3</code> and <code>name__2ea32</code> &mdash; and rehashes them on class churn. Every token counted here is a selector that silently stops matching when that happens; the fix is a class-module lookup such as <code>BdApi.Webpack.getByKeys(&hellip;)</code>. Counts are occurrences, not distinct classes: a vendored class-name map inflates a single addon fast.</p>
+    ${fragileTable(d.fragile)}
 </div>
 
 <div class="card">
