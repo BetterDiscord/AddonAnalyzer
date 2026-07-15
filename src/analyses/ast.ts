@@ -95,6 +95,21 @@ export const requires: Analysis = {
     run: (addon) => countBy(addon, "require", f => String(f.details?.module))
 };
 
+// Discord webpack module lookups, keyed as "<kind>:<value>" so one record carries every
+// kind (key:getChannel, store:MessageStore, string:..., protoKey:..., displayName:...)
+export const webpackTargets: Analysis = {
+    key: "webpack-targets",
+    types: [Type.Plugin],
+    run: (addon) => countBy(addon, "webpack-targets", f => `${String(f.details?.kind)}:${String(f.details?.value)}`)
+};
+
+// Discord methods patched via BdApi.Patcher, keyed by method name (patch type kept in details)
+export const patcherTargets: Analysis = {
+    key: "patcher-targets",
+    types: [Type.Plugin],
+    run: (addon) => countBy(addon, "patcher-targets", f => String(f.details?.method))
+};
+
 // Presence flags (not raw counts), so the summary reads as "addons exhibiting this signal"
 export const obfuscationSignals: Analysis = {
     key: "obfuscation-signals",

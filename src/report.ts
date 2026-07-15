@@ -35,6 +35,8 @@ interface ReportData {
     namespaces: Array<{name: string, calls: number, plugins: number}>;
     apis: Array<{api: string, calls: number, plugins: number}>;
     requires: Array<{module: string, calls: number, plugins: string[]}>;
+    webpackTargets: Array<{kind: string, value: string, calls: number, plugins: number}>;
+    patcherTargets: Array<{method: string, calls: number, plugins: number}>;
     hosts: Record<"network-urls" | "css-urls" | "remote-urls", Array<{host: string, refs: number, addons: number}>>;
     sinks: Array<{name: string, count: number, plugins: number}>;
     dynamicCode: Array<{name: string, count: number, plugins: number}>;
@@ -54,6 +56,8 @@ async function assemble(): Promise<ReportData> {
     const hostStats: Record<string, Map<string, HostStats>> = {"network-urls": new Map(), "css-urls": new Map(), "remote-urls": new Map()};
     const sinkPlugins = new Map<string, number>();
     const dynamicPlugins = new Map<string, number>();
+    const webpackPlugins = new Map<string, number>();
+    const patcherPlugins = new Map<string, number>();
     const flagged: Array<{name: string, signals: string[]}> = [];
 
     for (const author of Object.keys(addons)) {
@@ -82,6 +86,12 @@ async function assemble(): Promise<ReportData> {
             }
             for (const kind of Object.keys(asRecord(results["dynamic-code"]))) {
                 dynamicPlugins.set(kind, (dynamicPlugins.get(kind) ?? 0) + 1);
+            }
+            for (const key of Object.keys(asRecord(results["webpack-targets"]))) {
+                webpackPlugins.set(key, (webpackPlugins.get(key) ?? 0) + 1);
+            }
+            for (const method of Object.keys(asRecord(results["patcher-targets"]))) {
+                patcherPlugins.set(method, (patcherPlugins.get(method) ?? 0) + 1);
             }
             if (results["obfuscated-plugins"] === true) {
                 flagged.push({name, signals: Object.keys(asRecord(results["obfuscation-signals"]))});
@@ -119,6 +129,8 @@ async function assemble(): Promise<ReportData> {
     const injection = asRecord(summary["html-injection"]);
     const dynamic = asRecord(summary["dynamic-code"]);
     const signals = asRecord(summary["obfuscation-signals"]);
+    const webpackCalls = asRecord(summary["webpack-targets"]);
+    const patcherCalls = asRecord(summary["patcher-targets"]);
 
     return {
         generated: new Date().toISOString().slice(0, 10),
@@ -137,6 +149,15 @@ async function assemble(): Promise<ReportData> {
         requires: Object.entries(requireCalls)
             .map(([module, calls]) => ({module, calls, plugins: (requirePlugins.get(module) ?? []).sort()}))
             .sort((a, b) => b.plugins.length - a.plugins.length),
+        webpackTargets: Object.entries(webpackCalls)
+            .map(([key, calls]) => {
+                const split = key.indexOf(":");
+                return {kind: key.slice(0, split), value: key.slice(split + 1), calls, plugins: webpackPlugins.get(key) ?? 0};
+            })
+            .sort((a, b) => b.plugins - a.plugins || b.calls - a.calls),
+        patcherTargets: Object.entries(patcherCalls)
+            .map(([method, calls]) => ({method, calls, plugins: patcherPlugins.get(method) ?? 0}))
+            .sort((a, b) => b.plugins - a.plugins || b.calls - a.calls),
         hosts,
         sinks: Object.entries(injection).map(([name, count]) => ({name, count, plugins: sinkPlugins.get(name) ?? 0})).sort((a, b) => b.count - a.count),
         dynamicCode: Object.entries(dynamic).map(([name, count]) => ({name, count, plugins: dynamicPlugins.get(name) ?? 0})).sort((a, b) => b.count - a.count),
@@ -163,6 +184,20 @@ function hostTable(rows: Array<{host: string, refs: number, addons: number}>, ad
         ? `</tbody></table><details><summary>Show ${rest.length} more hosts</summary><table><tbody>${rest.map(row).join("")}</tbody></table></details>`
         : "</tbody></table>";
     return head + shown + tail;
+}
+
+// value/method rows ranked by plugin count, with an optional kind chip
+function targetTable(rows: Array<{label: string, chip?: string, calls: number, plugins: number}>, labelHead: string, visible = 25): string {
+    const max = rows[0]?.plugins ?? 0;
+    const row = (r: {label: string, chip?: string, calls: number, plugins: number}) =>
+        `<tr><td><code>${escapeHtml(r.label)}</code>${r.chip ? ` <span class="chip">${escapeHtml(r.chip)}</span>` : ""}</td><td class="bar-cell">${bar(r.plugins, max)}</td><td class="num">${fmt(r.plugins)}</td><td class="num muted">${fmt(r.calls)}</td></tr>`;
+    const head = `<table><thead><tr><th>${labelHead}</th><th></th><th class="num">Plugins</th><th class="num">Calls</th></tr></thead><tbody>`;
+    const shown = rows.slice(0, visible).map(row).join("");
+    const rest = rows.slice(visible);
+    const tail = rest.length
+        ? `</tbody></table><details><summary>Show ${rest.length} more</summary><table><tbody>${rest.map(row).join("")}</tbody></table></details>`
+        : "</tbody></table>";
+    return head + shown + tail || `<p class="muted">none found</p>`;
 }
 
 function render(d: ReportData): string {
@@ -261,6 +296,15 @@ footer ul { padding-left: 18px; }
     </tbody></table>
     ${restApis.length ? `<details><summary>Show all ${fmt(restApis.length)} remaining APIs</summary><table><tbody>${restApis.map(a => apiRow(a, apiMax)).join("")}</tbody></table></details>` : ""}
     </details>
+</div>
+
+<div class="card">
+    <h2>Discord internals reliance</h2>
+    <p class="note">What the ecosystem pulls out of Discord's webpack (module keys, exported strings, prototype keys, stores, display names) and which methods it patches. This is the surface that breaks on Discord updates &mdash; the highest-demand entries are candidates for a stable <code>CommonModules</code> offering. Undercounts plugins built on BDFDB or ZeresPluginLibrary, which route these lookups through the library rather than <code>BdApi</code> directly.</p>
+    <div class="cols">
+        <div><h2>Webpack lookup targets</h2>${targetTable(d.webpackTargets.map(t => ({label: t.value, chip: t.kind, calls: t.calls, plugins: t.plugins})), "Target")}</div>
+        <div><h2>Patched methods</h2>${targetTable(d.patcherTargets.map(t => ({label: t.method, calls: t.calls, plugins: t.plugins})), "Method")}</div>
+    </div>
 </div>
 
 <div class="card">

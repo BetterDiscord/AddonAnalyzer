@@ -7,8 +7,9 @@ import {networkUrlRule} from "./networkurls";
 import {obfuscationRule} from "./obfuscation";
 import {remoteUrlRule} from "./remoteurls";
 import {requireRule} from "./requires";
+import {patcherTargetsRule, webpackTargetsRule} from "./webpacktargets";
 
-export {bdApiRule, cssUrlRule, evalRule, innerHTMLRule, networkUrlRule, obfuscationRule, remoteUrlRule, requireRule};
+export {bdApiRule, cssUrlRule, evalRule, innerHTMLRule, networkUrlRule, obfuscationRule, remoteUrlRule, requireRule, webpackTargetsRule, patcherTargetsRule};
 
 export const rules: Rule[] = [
     bdApiRule,
@@ -19,4 +20,6 @@ export const rules: Rule[] = [
     obfuscationRule,
     remoteUrlRule,
     requireRule,
+    webpackTargetsRule,
+    patcherTargetsRule,
 ];
