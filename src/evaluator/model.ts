@@ -1,3 +1,5 @@
+import {type PEValue, Unknown} from "./types";
+
 export interface PEScope {
     bindings: Map<string, PEValue>;
     parent?: PEScope;

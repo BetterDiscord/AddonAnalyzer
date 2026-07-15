@@ -14,6 +14,16 @@ interface Metadata {
     count: number;
 }
 
+async function exists(location: string) {
+    try {
+        await fs.access(location);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+
 const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 function dateDiffInDays(a: Date, b: Date) {
 
@@ -25,12 +35,12 @@ function dateDiffInDays(a: Date, b: Date) {
 }
 
 export async function isInvalid() {
-    if (!(await fs.exists(cacheFolder))) return true;
+    if (!(await exists(cacheFolder))) return true;
     try {
-        const metadata: Metadata = JSON.parse((await fs.readFile(cacheMetaJson)).toString());
+        const metadata: Metadata = JSON.parse((await fs.readFile(cacheMetaJson)).toString()) as Metadata;
         const lastUpdated = new Date(metadata.lastUpdated);
         if (dateDiffInDays(lastUpdated, new Date()) >= 7) return true;
-        const cached: APIAddon[] = JSON.parse((await fs.readFile(addonCacheJson)).toString());
+        const cached: APIAddon[] = JSON.parse((await fs.readFile(addonCacheJson)).toString()) as APIAddon[];
         if (cached.length != metadata.count) return true;
         return false;
     }
@@ -41,8 +51,8 @@ export async function isInvalid() {
 
 
 async function ensureDirs() {
-    if (!(await fs.exists(cacheFolder))) await fs.mkdir(cacheFolder);
-    if (!(await fs.exists(addonFolder))) await fs.mkdir(addonFolder);
+    if (!(await exists(cacheFolder))) await fs.mkdir(cacheFolder);
+    if (!(await exists(addonFolder))) await fs.mkdir(addonFolder);
 }
 
 
@@ -63,7 +73,7 @@ export async function update() {
         if (addon.author.display_name !== author) {
             author = addon.author.display_name;
             authorPath = path.join(addonFolder, author.replace(/[/\\?%*:|"<>]/g, ""));
-            if (!(await fs.exists(authorPath))) await fs.mkdir(authorPath);
+            if (!(await exists(authorPath))) await fs.mkdir(authorPath);
 
             console.log("");
             console.log(`Downloading addons by ${author}...`);
@@ -80,7 +90,7 @@ async function downloadAddon(addon: APIAddon, location: string) {
     if (!sourceUrl) return;
 
     const authorPath = path.join(addonFolder, addon.author.display_name.replace(/[/\\?%*:|"<>]/g, ""));
-    if (!(await fs.exists(authorPath))) await fs.mkdir(authorPath);
+    if (!(await exists(authorPath))) await fs.mkdir(authorPath);
 
     const downloadUrl = sourceUrl.replace("github.com", "raw.githubusercontent.com").replace("blob/", "");
     const code = await ky.get(downloadUrl).text();

@@ -1,34 +1,12 @@
 import type {ESTree} from "meriyah";
 
 
-type KeysOfUnion<T> = T extends unknown ? keyof T : never;
-
-type ValueOfKey<T, K extends PropertyKey> =
-    T extends unknown
-    ? K extends keyof T
-    ? T[K]
-    : never
-    : never;
-
-
 function hasKey<T extends object>(
     obj: T,
     key: PropertyKey
 ): obj is T & Record<PropertyKey, unknown> {
     return key in obj;
 }
-
-function safeGet<T extends object>(
-    obj: T,
-    key: KeysOfUnion<T>
-) {
-    return (obj as any)[key] as T extends object
-        ? key extends keyof T
-        ? T[key]
-        : never
-        : never;
-}
-
 
 
 export function walk(node: ESTree.Node, visit: (n: ESTree.Node, parent: ESTree.Node | null) => void) {
@@ -40,14 +18,9 @@ export function walk(node: ESTree.Node, visit: (n: ESTree.Node, parent: ESTree.N
 
         visit(cur, parent);
 
-        if ("body" in cur) {
-            console.log(cur.body);
-        }
-
         for (const key of Object.keys(cur)) {
             if (!hasKey(cur, key)) continue;
-            const typedKey = key;
-            const val = cur[typedKey];
+            const val = cur[key];
             if (Array.isArray(val)) {
                 for (const child of val) {
                     if (child && typeof child === "object") {

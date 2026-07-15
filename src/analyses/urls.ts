@@ -16,7 +16,7 @@ function cleanUrl(url: string) {
     return cleaned.trim();
 }
 
-(async () => {
+(() => {
 
     for (const author of authors) {
         // if (author == "results.json") continue;
