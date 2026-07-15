@@ -4,8 +4,19 @@ import {memberChain, resolveChain, stripGlobal} from "../helpers";
 import {type Finding, type Rule, type RuleContext} from "../types";
 
 
+// Namespaced APIs deprecated with replacements available
+const DEPRECATED_CURRENT = [
+    "BdApi.ReactUtils.rootInstance",
+];
+
+// Deprecated options of otherwise-fine calls: api -> which argument and which property
+const DEPRECATED_OPTIONS: Record<string, {index: number, option: string}> = {
+    "BdApi.DOM.createElement": {index: 1, option: "target"},
+};
+
 // Old-old deprecations kept as a sanity check; the current store corpus should report zero of these
 const DEPRECATED = new Set([
+    ...DEPRECATED_CURRENT,
     "BdApi.getData",
     "BdApi.setData",
     "BdApi.loadData",
@@ -43,8 +54,20 @@ function resolveBdApi(node: ESTree.Node, context: RuleContext): {chain: string[]
     return {chain: resolved, viaAlias: direct[0] !== "BdApi"};
 }
 
-function buildFinding(api: string, usage: "call" | "member" | "destructure", viaAlias: boolean, node: ESTree.Node, context: RuleContext): Finding {
-    const deprecated = DEPRECATED.has(api);
+// Non-computed properties of an object literal argument
+function literalOptionNames(argument: ESTree.Node | undefined): string[] {
+    if (!argument || argument.type !== "ObjectExpression") return [];
+    const names: string[] = [];
+    for (const property of argument.properties) {
+        if (property.type !== "Property") continue;
+        if (!property.computed && property.key.type === "Identifier") names.push(property.key.name);
+        else if (property.key.type === "Literal" && typeof property.key.value === "string") names.push(property.key.value);
+    }
+    return names;
+}
+
+function buildFinding(api: string, usage: "call" | "member" | "destructure", viaAlias: boolean, node: ESTree.Node, context: RuleContext, forceDeprecated = false): Finding {
+    const deprecated = forceDeprecated || DEPRECATED.has(api);
     return {
         rule: "bdapi-usage",
         file: context.file,
@@ -80,8 +103,17 @@ export const bdApiRule: Rule = {
         if (node.type === "MemberExpression") {
             const resolved = resolveBdApi(node, context);
             if (!resolved) return null;
+            const api = resolved.chain.join(".");
             const usage = parent?.type === "CallExpression" && parent.callee === node ? "call" : "member";
-            return buildFinding(resolved.chain.join("."), usage, resolved.viaAlias, node, context);
+            const findings = [buildFinding(api, usage, resolved.viaAlias, node, context)];
+
+            // e.g. the deprecated `target` option of BdApi.DOM.createElement
+            const optionSpec = DEPRECATED_OPTIONS[api];
+            if (optionSpec && usage === "call" && parent?.type === "CallExpression"
+                && literalOptionNames(parent.arguments[optionSpec.index]).includes(optionSpec.option)) {
+                findings.push(buildFinding(`${api}({${optionSpec.option}})`, usage, resolved.viaAlias, node, context, true));
+            }
+            return findings;
         }
 
         if (node.type === "VariableDeclarator" && node.id.type === "ObjectPattern" && node.init) {
