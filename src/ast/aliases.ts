@@ -5,6 +5,13 @@ import {walk} from "./walk";
 
 type Register = (name: string, chain: string[] | null) => void;
 
+// Chain an initializer resolves to. Instances alias their constructor's chain
+// (const bd = new BdApi("x") -> bd: ["BdApi"]) since members mirror the namespace.
+function initChain(init: ESTree.Node): string[] | null {
+    if (init.type === "NewExpression") return memberChain(init.callee);
+    return memberChain(init);
+}
+
 // Registers every name bound by a pattern. Destructured names extend the source chain
 // ({Webpack} = BdApi binds Webpack -> BdApi.Webpack); bindings we can't follow get null.
 function bindPattern(pattern: ESTree.Node, source: string[] | null, register: Register) {
@@ -66,7 +73,7 @@ export function collectAliases(ast: ESTree.Program): Map<string, string[]> {
     walk(ast, (node) => {
         switch (node.type) {
             case "VariableDeclarator":
-                bindPattern(node.id, node.init ? memberChain(node.init) : null, register);
+                bindPattern(node.id, node.init ? initChain(node.init) : null, register);
                 break;
             case "AssignmentExpression":
                 // Reassignment makes a name unreliable as an alias

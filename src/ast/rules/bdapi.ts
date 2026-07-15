@@ -1,6 +1,6 @@
 import type {ESTree} from "meriyah";
 import {Type} from "../../types";
-import {memberChain, resolveChain} from "../helpers";
+import {memberChain, resolveChain, stripGlobal} from "../helpers";
 import {type Finding, type Rule, type RuleContext} from "../types";
 
 
@@ -29,10 +29,6 @@ const DEPRECATED = new Set([
     "BdApi.showNotice",
     "BdApi.openDialog",
 ]);
-
-function stripGlobal(chain: string[]): string[] {
-    return (chain[0] === "window" || chain[0] === "globalThis") ? chain.slice(1) : chain;
-}
 
 // Canonical BdApi path of an expression, following aliases: with `const W = BdApi.Webpack`,
 // W.getModule resolves to ["BdApi", "Webpack", "getModule"]. Null when not BdApi-rooted.

@@ -41,6 +41,7 @@ export function analyzeAddon(
     const context: RuleContext = {
         file,
         addonType,
+        ast,
         aliases: ast ? collectAliases(ast) : new Map(),
         getLoc(node) {
             if (!node.loc) return null;

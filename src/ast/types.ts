@@ -8,6 +8,9 @@ export interface RuleContext {
     // Identifier aliases of member chains (const Api = BdApi -> Api: ["BdApi"]), empty for themes
     aliases: ReadonlyMap<string, string[]>;
 
+    // Parsed program for whole-file rules (finalize); null for themes or unparseable plugins
+    ast: ESTree.Program | null;
+
     getLoc(node: ESTree.Node): {line: number; column: number;} | null;
 }
 

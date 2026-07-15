@@ -22,3 +22,16 @@ export function getBinding(scope: PEScope, name: string): PEValue {
 export function setBinding(scope: PEScope, name: string, value: PEValue) {
     scope.bindings.set(name, value);
 }
+
+// Assignment rebinds where the name was declared, falling back to the current scope
+export function assignBinding(scope: PEScope, name: string, value: PEValue) {
+    let cur: PEScope | undefined = scope;
+    while (cur) {
+        if (cur.bindings.has(name)) {
+            cur.bindings.set(name, value);
+            return;
+        }
+        cur = cur.parent;
+    }
+    scope.bindings.set(name, value);
+}

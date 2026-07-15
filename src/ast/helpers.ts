@@ -29,6 +29,11 @@ export function memberChain(node: ESTree.Node): string[] | null {
     return parts;
 }
 
+// Drops a leading window./globalThis. so chains compare against their canonical root
+export function stripGlobal(chain: string[]): string[] {
+    return (chain[0] === "window" || chain[0] === "globalThis") ? chain.slice(1) : chain;
+}
+
 // Substitutes alias roots until a fixed point, e.g. with W -> ["BdApi", "Webpack"],
 // ["W", "getModule"] resolves to ["BdApi", "Webpack", "getModule"]. Hop-limited against cycles.
 export function resolveChain(chain: string[], aliases: ReadonlyMap<string, string[]>): string[] {

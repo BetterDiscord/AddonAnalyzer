@@ -65,6 +65,12 @@ export const cssUrls: Analysis = {
     run: (addon) => countBy(addon, "css-url", f => hostOf(String(f.details?.url)))
 };
 
+export const networkUrls: Analysis = {
+    key: "network-urls",
+    types: [Type.Plugin],
+    run: (addon) => countBy(addon, "network-url", f => hostOf(String(f.details?.url)))
+};
+
 export const htmlInjection: Analysis = {
     key: "html-injection",
     types: [Type.Plugin],

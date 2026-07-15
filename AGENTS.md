@@ -33,7 +33,7 @@ To add a check: write a `Rule` in `src/ast/rules/` (register it in `rules/index.
 
 ### Alias tracking
 
-`collectAliases` resolves `const Api = BdApi`, `const W = Api.Webpack`, and destructuring (incl. renames and `window.`-rooted chains) so the bdapi rule counts canonical paths. It is deliberately **scope-blind and conservative**: any name declared twice, reassigned, or shadowed by a function param/catch/class name anywhere in the file is dropped entirely. Minified code mostly loses its aliases — that's intended; undercounting beats miscounting. Don't "fix" this by making it less conservative without real scope tracking (that's the parked evaluator's job, see below).
+`collectAliases` resolves `const Api = BdApi`, `const W = Api.Webpack`, destructuring (incl. renames and `window.`-rooted chains), and constructor instances — `const bd = new BdApi("Name")` aliases `bd` to `BdApi`, a pattern ~a third of store plugins use — so the bdapi and network-url rules see canonical paths. It is deliberately **scope-blind and conservative**: any name declared twice, reassigned, or shadowed by a function param/catch/class name anywhere in the file is dropped entirely. Minified code mostly loses its aliases — that's intended; undercounting beats miscounting. Don't "fix" this by making it less conservative without real scope tracking (that's the parked evaluator's job, see below).
 
 ## Footguns
 
@@ -47,7 +47,7 @@ To add a check: write a `Rule` in `src/ast/rules/` (register it in `rules/index.
 ## Current state / roadmap
 
 - Theme URL extraction lives in the `css-url` `visitText` rule (`src/ast/rules/cssurls.ts`, aggregated as `css-urls` keyed by hostname). It applies to plugins too, catching `url()` refs inside embedded CSS strings that the AST `remote-url` rule can't see. The `imports` analysis stays separate because it resolves transitive remote `@import`s over the network rather than just extracting them.
-- `src/evaluator/` (`types.ts` + `model.ts`) is a **parked** constant-folding partial evaluator (phase 2): resolve dynamic URLs like `fetch(BASE + "/api/" + endpoint)` and give the alias tracker real scope semantics. Nothing imports it yet; it compiles but is incomplete by design.
+- `src/evaluator/` is a constant-folding partial evaluator: `core.ts` folds expressions (literals, templates, concat, member access on known objects/arrays, a few pure string methods), `interpret.ts` walks a program in source order with real nested scopes (shadowing and reassignment behave correctly; source order only *approximates* execution order — it is not a real interpreter). Its consumer is the `network-url` rule (`src/ast/rules/networkurls.ts`), which evaluates the URL argument at network sinks (`fetch`, `BdApi.Net.fetch`, `new WebSocket`/`EventSource`, XHR `.open`, `window.open`, `navigator.sendBeacon`); unresolvable segments degrade to `${…}` placeholders as long as the host stays static. Roughly half of corpus `fetch` sites resolve — the rest take runtime values through function params, which is correct conservatism, not a bug to fix.
 - `debug/` and `notes/` are scratch/context folders, not part of the build (`tsconfig` only includes `src/`); `debug/obfuscation.ts` still references the deleted swc engine and is kept only as a signal-list reference for a future obfuscation-detection rule.
 
 ## Conventions
