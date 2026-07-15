@@ -32,7 +32,7 @@ export async function analyze() {
                 type: filename.endsWith(".plugin.js") ? Type.Plugin : Type.Theme
             };
             for (const name in Analyses) {
-                const analysis = Analyses[name as keyof typeof Analyses] as Analysis;
+                const analysis: Analysis = Analyses[name as keyof typeof Analyses];
                 if (!analysis.types.includes(addon.type)) continue;
                 const post: Results = await analysis.run(addon);
                 results[author][filename][analysis.key] = post;
@@ -105,7 +105,8 @@ function mergeResults(original: Results, added: Results): Results {
             if (res[key]) res[key] = res[key] + added[key];
             else res[key] = added[key];
         }
+        return res;
     }
 
-    return false;
+    throw new Error(`Unexpected merging type ${typeof original}`);
 }

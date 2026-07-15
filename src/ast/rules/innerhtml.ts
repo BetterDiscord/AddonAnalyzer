@@ -1,6 +1,7 @@
 import type {ESTree} from "meriyah";
 import {calleeOf, propertyName} from "../helpers";
-import {AddonType, type Rule} from "../types";
+import {Type} from "../../types";
+import {type Rule} from "../types";
 
 
 const SINK_PROPERTIES = new Set(["innerHTML", "outerHTML"]);
@@ -19,7 +20,7 @@ function htmlSink(node: ESTree.Node): string | null {
 
 export const innerHTMLRule: Rule = {
     name: "innerHTML",
-    appliesTo: [AddonType.Plugin],
+    appliesTo: [Type.Plugin],
 
     match(node) {
         return htmlSink(node) !== null;

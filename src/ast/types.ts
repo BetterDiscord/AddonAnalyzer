@@ -1,13 +1,13 @@
 import {type ESTree} from "meriyah";
-
-export const enum AddonType {
-    Plugin = "plugin",
-    Theme = "theme",
-};
+import {Type} from "../types";
 
 export interface RuleContext {
     file: string;
-    addonType: AddonType;
+    addonType: Type;
+
+    // Identifier aliases of member chains (const Api = BdApi -> Api: ["BdApi"]), empty for themes
+    aliases: ReadonlyMap<string, string[]>;
+
     getLoc(node: ESTree.Node): {line: number; column: number;} | null;
 }
 
@@ -15,7 +15,7 @@ export interface Rule {
     name: string;
 
     // Which addon types this rule applies to
-    appliesTo: AddonType[] | "both";
+    appliesTo: Type[] | "both";
 
     // Simple per-node rules
     match?(node: ESTree.Node, context: RuleContext, parent: ESTree.Node | null): boolean;

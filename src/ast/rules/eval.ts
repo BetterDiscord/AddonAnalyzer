@@ -1,6 +1,7 @@
 import type {ESTree} from "meriyah";
 import {calleeOf} from "../helpers";
-import {AddonType, type Rule} from "../types";
+import {Type} from "../../types";
+import {type Rule} from "../types";
 
 
 function dynamicCodeKind(node: ESTree.Node): string | null {
@@ -14,7 +15,7 @@ function dynamicCodeKind(node: ESTree.Node): string | null {
 
 export const evalRule: Rule = {
     name: "eval",
-    appliesTo: [AddonType.Plugin],
+    appliesTo: [Type.Plugin],
 
     match(node) {
         return dynamicCodeKind(node) !== null;

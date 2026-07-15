@@ -1,11 +1,13 @@
 import {parseScript, type ESTree} from "meriyah";
+import {Type} from "../types";
+import {collectAliases} from "./aliases";
 import {walk} from "./walk";
-import {type Rule, type RuleContext, AddonType, type Finding} from "./types";
+import {type Rule, type RuleContext, type Finding} from "./types";
 
 export function analyzeAddon(
     file: string,
     code: string,
-    addonType: AddonType,
+    addonType: Type,
     rules: Rule[]
 ): Finding[] {
     const findings: Finding[] = [];
@@ -15,9 +17,31 @@ export function analyzeAddon(
         r => r.appliesTo === "both" || r.appliesTo.includes(addonType)
     );
 
+    let ast: ESTree.Program | null = null;
+    if (addonType === Type.Plugin) {
+        try {
+            ast = parseScript(code, {
+                next: true,
+                loc: true,
+                ranges: true
+            });
+        }
+        catch (error) {
+            findings.push({
+                rule: "parse-error",
+                file,
+                message: `Failed to parse: ${error instanceof Error ? error.message : String(error)}`,
+                category: "other",
+                severity: "error",
+                loc: null
+            });
+        }
+    }
+
     const context: RuleContext = {
         file,
         addonType,
+        aliases: ast ? collectAliases(ast) : new Map(),
         getLoc(node) {
             if (!node.loc) return null;
             return {
@@ -35,40 +59,18 @@ export function analyzeAddon(
     }
 
     // 2. JS plugin analysis
-    if (addonType === AddonType.Plugin) {
-        let ast: ESTree.Program | null = null;
-        try {
-            ast = parseScript(code, {
-                next: true,
-                loc: true,
-                ranges: true,
-                module: false
-            });
-        }
-        catch (error) {
-            findings.push({
-                rule: "parse-error",
-                file,
-                message: `Failed to parse: ${error instanceof Error ? error.message : String(error)}`,
-                category: "other",
-                severity: "error",
-                loc: null
-            });
-        }
-
-        if (ast) {
-            walk(ast, (node, parent) => {
-                for (const rule of applicable) {
-                    if (rule.match && rule.report) {
-                        if (rule.match(node, context, parent)) {
-                            const result = rule.report(node, context, parent);
-                            if (Array.isArray(result)) findings.push(...result);
-                            else if (result) findings.push(result);
-                        }
+    if (ast) {
+        walk(ast, (node, parent) => {
+            for (const rule of applicable) {
+                if (rule.match && rule.report) {
+                    if (rule.match(node, context, parent)) {
+                        const result = rule.report(node, context, parent);
+                        if (Array.isArray(result)) findings.push(...result);
+                        else if (result) findings.push(result);
                     }
                 }
-            });
-        }
+            }
+        });
     }
 
     // 3. finalize() for rules that need whole-file context

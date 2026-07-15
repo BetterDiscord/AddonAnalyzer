@@ -1,8 +1,12 @@
 import type {ESTree} from "meriyah";
-import {AddonType, type Rule} from "../types";
+import {Type} from "../../types";
+import {type Rule} from "../types";
 
 
 const URL_PATTERN = /^https?:\/\//;
+
+// eslint-disable-next-line no-template-curly-in-string
+export const DYNAMIC_SEGMENT = "${…}";
 
 function extractUrl(node: ESTree.Node): {url: string, exact: boolean} | null {
     if (node.type === "Literal" && typeof node.value === "string" && URL_PATTERN.test(node.value)) {
@@ -11,8 +15,7 @@ function extractUrl(node: ESTree.Node): {url: string, exact: boolean} | null {
 
     // Template literals keep dynamic segments as ${…} so the static host is still visible
     if (node.type === "TemplateLiteral" && URL_PATTERN.test(node.quasis[0]?.value.cooked ?? "")) {
-        // eslint-disable-next-line no-template-curly-in-string
-        const url = node.quasis.map(q => q.value.cooked ?? q.value.raw).join("${…}");
+        const url = node.quasis.map(q => q.value.cooked ?? q.value.raw).join(DYNAMIC_SEGMENT);
         return {url, exact: node.expressions.length === 0};
     }
 
@@ -21,7 +24,7 @@ function extractUrl(node: ESTree.Node): {url: string, exact: boolean} | null {
 
 export const remoteUrlRule: Rule = {
     name: "remote-url",
-    appliesTo: [AddonType.Plugin],
+    appliesTo: [Type.Plugin],
 
     match(node) {
         return extractUrl(node) !== null;
