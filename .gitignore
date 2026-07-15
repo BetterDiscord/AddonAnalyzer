@@ -1,3 +1,5 @@
 results/
 .cache/
 node_modules/
+notes/
+debug/

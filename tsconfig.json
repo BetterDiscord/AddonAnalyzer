@@ -22,8 +22,8 @@
         // Some stricter flags
         "noUnusedLocals": true,
         "noUnusedParameters": true,
-        "noPropertyAccessFromIndexSignature": false
-        // "typeRoots": ["node_modules/@types", "types"]
+        "noPropertyAccessFromIndexSignature": false,
+        "types": ["bun"]
       },
       "include": ["src/**/*", "scripts/*", "tests/**/*", "types/index.d.ts"],
   }
