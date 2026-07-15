@@ -18,8 +18,8 @@ export interface Rule {
     appliesTo: AddonType[] | "both";
 
     // Simple per-node rules
-    match?(node: ESTree.Node, context: RuleContext): boolean;
-    report?(node: ESTree.Node, context: RuleContext): Finding | null;
+    match?(node: ESTree.Node, context: RuleContext, parent: ESTree.Node | null): boolean;
+    report?(node: ESTree.Node, context: RuleContext, parent: ESTree.Node | null): Finding | Finding[] | null;
 
     // Optional: whole-file summary rules
     finalize?(context: RuleContext): Finding[] | null;

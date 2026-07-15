@@ -36,23 +36,39 @@ export function analyzeAddon(
 
     // 2. JS plugin analysis
     if (addonType === AddonType.Plugin) {
-        const ast = parseScript(code, {
-            next: true,
-            loc: true,
-            ranges: true,
-            module: false
-        });
+        let ast: ESTree.Program | null = null;
+        try {
+            ast = parseScript(code, {
+                next: true,
+                loc: true,
+                ranges: true,
+                module: false
+            });
+        }
+        catch (error) {
+            findings.push({
+                rule: "parse-error",
+                file,
+                message: `Failed to parse: ${error instanceof Error ? error.message : String(error)}`,
+                category: "other",
+                severity: "error",
+                loc: null
+            });
+        }
 
-        walk(ast, (node: ESTree.Node) => {
-            for (const rule of applicable) {
-                if (rule.match && rule.report) {
-                    if (rule.match(node, context)) {
-                        const result = rule.report(node, context);
-                        if (result) findings.push(result);
+        if (ast) {
+            walk(ast, (node, parent) => {
+                for (const rule of applicable) {
+                    if (rule.match && rule.report) {
+                        if (rule.match(node, context, parent)) {
+                            const result = rule.report(node, context, parent);
+                            if (Array.isArray(result)) findings.push(...result);
+                            else if (result) findings.push(result);
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
     }
 
     // 3. finalize() for rules that need whole-file context
