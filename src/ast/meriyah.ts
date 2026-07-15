@@ -1,6 +1,6 @@
 import {parseScript, type ESTree} from "meriyah";
 import {Type} from "../types";
-import {collectAliases} from "./aliases";
+import {collectScopeInfo} from "./aliases";
 import {walk} from "./walk";
 import {type Rule, type RuleContext, type Finding} from "./types";
 
@@ -39,11 +39,14 @@ export function analyzeAddon(
         }
     }
 
+    const scope = ast ? collectScopeInfo(ast) : null;
     const context: RuleContext = {
         file,
         addonType,
         ast,
-        aliases: ast ? collectAliases(ast) : new Map(),
+        aliases: scope?.aliases ?? new Map(),
+        declared: scope?.declared ?? new Set(),
+        shadowed: scope?.shadowed ?? new Set(),
         getLoc(node) {
             if (!node.loc) return null;
             return {

@@ -8,6 +8,12 @@ export interface RuleContext {
     // Identifier aliases of member chains (const Api = BdApi -> Api: ["BdApi"]), empty for themes
     aliases: ReadonlyMap<string, string[]>;
 
+    // Names bound anywhere in the file by a declarator/assignment, and names bound by a
+    // function param, catch clause, or function/class name. Rules matching roots that can
+    // plausibly be local (process, global, ReactDOM) use these to avoid counting locals.
+    declared: ReadonlySet<string>;
+    shadowed: ReadonlySet<string>;
+
     // Parsed program for whole-file rules (finalize); null for themes or unparseable plugins
     ast: ESTree.Program | null;
 

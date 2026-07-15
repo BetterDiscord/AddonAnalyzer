@@ -48,18 +48,34 @@ function bindPattern(pattern: ESTree.Node, source: string[] | null, register: Re
     }
 }
 
+export interface ScopeInfo {
+    // Identifier -> member chain, for names that survived the conservative filter
+    aliases: Map<string, string[]>;
+
+    // Every name bound anywhere in the file by a variable declarator or assignment
+    declared: Set<string>;
+
+    // Every name bound anywhere in the file by a function parameter, catch clause,
+    // or function/class name — i.e. names that shadow whatever they're named after
+    shadowed: Set<string>;
+}
+
 /**
  * Builds a map of identifier -> member chain for simple aliases like
  * `const Api = BdApi` or `const {Webpack} = BdApi`, so rules can resolve
- * usages through them.
+ * usages through them, plus the raw binding sets it computes along the way.
  *
  * The walk is scope-blind, so correctness comes from being conservative:
  * a name declared more than once, reassigned, or shadowed by any function
  * parameter, catch clause, or function/class name anywhere in the file is
  * dropped entirely. Minified code mostly loses its aliases this way, which
  * beats miscounting.
+ *
+ * `declared`/`shadowed` are exposed because rules keyed on names that CAN be
+ * local (`process`, `global`, `ReactDOM` — unlike `BdApi`) need to tell an
+ * ambient global from a same-named local binding.
  */
-export function collectAliases(ast: ESTree.Program): Map<string, string[]> {
+export function collectScopeInfo(ast: ESTree.Program): ScopeInfo {
     const candidates = new Map<string, string[] | null>();
     const shadowed = new Set<string>();
 
@@ -103,5 +119,9 @@ export function collectAliases(ast: ESTree.Program): Map<string, string[]> {
     for (const [name, chain] of candidates) {
         if (chain && !shadowed.has(name)) aliases.set(name, chain);
     }
-    return aliases;
+    return {aliases, declared: new Set(candidates.keys()), shadowed};
+}
+
+export function collectAliases(ast: ESTree.Program): Map<string, string[]> {
+    return collectScopeInfo(ast).aliases;
 }
