@@ -4,9 +4,11 @@ import {cssUrlRule} from "./cssurls";
 import {evalRule} from "./eval";
 import {innerHTMLRule} from "./innerhtml";
 import {networkUrlRule} from "./networkurls";
+import {obfuscationRule} from "./obfuscation";
 import {remoteUrlRule} from "./remoteurls";
+import {requireRule} from "./requires";
 
-export {bdApiRule, cssUrlRule, evalRule, innerHTMLRule, networkUrlRule, remoteUrlRule};
+export {bdApiRule, cssUrlRule, evalRule, innerHTMLRule, networkUrlRule, obfuscationRule, remoteUrlRule, requireRule};
 
 export const rules: Rule[] = [
     bdApiRule,
@@ -14,5 +16,7 @@ export const rules: Rule[] = [
     evalRule,
     innerHTMLRule,
     networkUrlRule,
+    obfuscationRule,
     remoteUrlRule,
+    requireRule,
 ];

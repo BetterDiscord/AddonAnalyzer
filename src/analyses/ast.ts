@@ -88,3 +88,29 @@ export const parseErrors: Analysis = {
     types: [Type.Plugin],
     run: (addon) => getFindings(addon).filter(f => f.rule === "parse-error").length
 };
+
+export const requires: Analysis = {
+    key: "requires",
+    types: [Type.Plugin],
+    run: (addon) => countBy(addon, "require", f => String(f.details?.module))
+};
+
+// Presence flags (not raw counts), so the summary reads as "addons exhibiting this signal"
+export const obfuscationSignals: Analysis = {
+    key: "obfuscation-signals",
+    types: [Type.Plugin],
+    run(addon) {
+        const present: Record<string, number> = {};
+        for (const finding of getFindings(addon)) {
+            if (finding.rule !== "obfuscation") continue;
+            for (const signal of (finding.details?.signals as string[] | undefined) ?? []) present[signal] = 1;
+        }
+        return present;
+    }
+};
+
+export const obfuscatedPlugins: Analysis = {
+    key: "obfuscated-plugins",
+    types: [Type.Plugin],
+    run: (addon) => getFindings(addon).some(f => f.rule === "obfuscation" && f.details?.flagged === true)
+};

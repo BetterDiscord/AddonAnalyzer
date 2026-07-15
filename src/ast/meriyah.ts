@@ -23,7 +23,8 @@ export function analyzeAddon(
             ast = parseScript(code, {
                 next: true,
                 loc: true,
-                ranges: true
+                ranges: true,
+                raw: true // literal source text, needed for escape-density signals
             });
         }
         catch (error) {
