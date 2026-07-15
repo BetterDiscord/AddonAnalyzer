@@ -44,17 +44,25 @@ export const deprecatedApis: Analysis = {
     }
 };
 
+function hostOf(url: string): string {
+    try {
+        return new URL(url.split(DYNAMIC_SEGMENT)[0]).hostname;
+    }
+    catch {
+        return "(dynamic)";
+    }
+}
+
 export const remoteUrls: Analysis = {
     key: "remote-urls",
     types: [Type.Plugin],
-    run: (addon) => countBy(addon, "remote-url", (f) => {
-        try {
-            return new URL(String(f.details?.url).split(DYNAMIC_SEGMENT)[0]).hostname;
-        }
-        catch {
-            return "(dynamic)";
-        }
-    })
+    run: (addon) => countBy(addon, "remote-url", f => hostOf(String(f.details?.url)))
+};
+
+export const cssUrls: Analysis = {
+    key: "css-urls",
+    types: [Type.Plugin, Type.Theme],
+    run: (addon) => countBy(addon, "css-url", f => hostOf(String(f.details?.url)))
 };
 
 export const htmlInjection: Analysis = {

@@ -24,8 +24,8 @@ export interface Rule {
     // Optional: whole-file summary rules
     finalize?(context: RuleContext): Finding[] | null;
 
-    // Optional: text-only rules (metadata, etc.)
-    visitText?(text: string, context: RuleContext): void;
+    // Optional: text-only rules (metadata, CSS, etc.)
+    visitText?(text: string, context: RuleContext): Finding | Finding[] | null;
 }
 
 

@@ -51,10 +51,12 @@ export function analyzeAddon(
         }
     };
 
-    // 1. Text-only rules (metadata, etc.)
+    // 1. Text-only rules (metadata, CSS, etc.)
     for (const rule of applicable) {
         if (rule.visitText) {
-            rule.visitText(code, context);
+            const result = rule.visitText(code, context);
+            if (Array.isArray(result)) findings.push(...result);
+            else if (result) findings.push(result);
         }
     }
 

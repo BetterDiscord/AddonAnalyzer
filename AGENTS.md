@@ -46,7 +46,7 @@ To add a check: write a `Rule` in `src/ast/rules/` (register it in `rules/index.
 
 ## Current state / roadmap
 
-- Themes currently only get the `//META` and `@import` analyses; the old standalone theme URL script (`src/analyses/urls.ts`) is unported dead code — its logic should eventually become a `visitText` rule.
+- Theme URL extraction lives in the `css-url` `visitText` rule (`src/ast/rules/cssurls.ts`, aggregated as `css-urls` keyed by hostname). It applies to plugins too, catching `url()` refs inside embedded CSS strings that the AST `remote-url` rule can't see. The `imports` analysis stays separate because it resolves transitive remote `@import`s over the network rather than just extracting them.
 - `src/evaluator/` (`types.ts` + `model.ts`) is a **parked** constant-folding partial evaluator (phase 2): resolve dynamic URLs like `fetch(BASE + "/api/" + endpoint)` and give the alias tracker real scope semantics. Nothing imports it yet; it compiles but is incomplete by design.
 - `debug/` and `notes/` are scratch/context folders, not part of the build (`tsconfig` only includes `src/`); `debug/obfuscation.ts` still references the deleted swc engine and is kept only as a signal-list reference for a future obfuscation-detection rule.
 
