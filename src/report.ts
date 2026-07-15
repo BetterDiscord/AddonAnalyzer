@@ -319,13 +319,18 @@ footer ul { padding-left: 18px; }
 </div>
 
 <div class="card">
-    <h2>Environment coupling — polyfill retirement list</h2>
-    <p class="note">What plugins reach for outside the addon sandbox: modules served by BD's <code>require</code> polyfill, and the Node/Electron globals they touch directly. Both retire the same way &mdash; each list names the plugins to migrate first.</p>
+    <h2>require() usage — polyfill retirement list</h2>
+    <p class="note">BetterDiscord has no real <code>require</code>; these modules are served by the polyfill. Each list names the plugins to migrate before it can be removed. Plugins also reach the same environment without <code>require</code> &mdash; see Environment coupling below.</p>
     <table><thead><tr><th>Module</th><th></th><th class="num">Plugins</th><th class="num">Calls</th></tr></thead><tbody>
     ${d.requires.map(r => `<tr><td><code>require("${escapeHtml(r.module)}")</code></td><td class="bar-cell">${bar(r.plugins.length, d.requires[0]?.plugins.length ?? 0)}</td><td class="num">${fmt(r.plugins.length)}</td><td class="num muted">${fmt(r.calls)}</td></tr>
     <tr><td colspan="4" style="border-bottom:1px solid var(--hairline)"><details><summary>Plugins requiring <code>${escapeHtml(r.module)}</code></summary><ul>${r.plugins.map(p => `<li>${escapeHtml(p)}</li>`).join("")}</ul></details></td></tr>`).join("")}
     </tbody></table>
-    <div class="cols" style="margin-top:18px">
+</div>
+
+<div class="card">
+    <h2>Environment coupling</h2>
+    <p class="note">The rest of what plugins reach for outside the addon sandbox: Node/Electron globals touched directly rather than through the <code>require</code> polyfill, and the React entry points that break on a Discord React bump.</p>
+    <div class="cols">
         <div>
             <h2>Node/Electron globals</h2>
             <p class="note">Direct access to the bridged environment, shown as root plus one segment. A file that binds one of these names locally (<code>function f(process)</code>) is skipped entirely rather than guessed at, so these are floor values.</p>
