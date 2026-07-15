@@ -5,6 +5,7 @@
     "main": "downloadall.js",
     "scripts": {
         "analyze": "bun run src/index.ts",
+        "report": "bun run src/report.ts",
         "clear": "rm -rf .cache"
     },
     "author": "",
