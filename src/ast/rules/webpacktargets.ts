@@ -116,8 +116,13 @@ export const patcherTargetsRule: Rule = {
             const type = chain.slice("BdApi.Patcher.".length);
             if (!PATCHER_TYPES.has(type)) return;
 
-            const methodArg = node.arguments[2];
+            // The method is the argument just before the trailing callback. Its index depends
+            // on the Patcher form: static BdApi.Patcher.after is (caller, module, method, cb),
+            // but a `new BdApi(name)` instance bakes the caller in, giving (module, method, cb).
+            // The alias tracker collapses both to BdApi.Patcher, so locate the method by
+            // position relative to the callback rather than a fixed index.
             let method = DYNAMIC;
+            const methodArg = node.arguments[node.arguments.length - 2];
             if (methodArg && methodArg.type !== "SpreadElement") {
                 const value = evalExpr(methodArg, scope);
                 if (value.kind === "string") method = value.value;
