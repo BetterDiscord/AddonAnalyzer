@@ -33,6 +33,9 @@ interface ReportData {
     // Second-newest distinct dataDate, or null on a first run / fresh checkout. Everything
     // delta-shaped must tolerate null: history is a bonus, never a precondition for rendering.
     previous: Snapshot | null;
+
+    // Oldest-first KPI series for tile sparklines; null until >= 3 snapshots exist
+    kpiSeries: Record<keyof Kpis, number[]> | null;
     corpus: number;
     metaFields: Array<{field: string, addons: number, known: boolean, required: boolean}>;
     metaProblems: Array<{problem: string, field: string, addons: string[]}>;
@@ -175,11 +178,24 @@ async function assemble(): Promise<ReportData> {
     const history = await readHistory();
     const previous = history.filter(s => s.dataDate < dataDate).pop() ?? null;
 
+    const kpis = deriveKpis(addons, summary);
+
+    // Last 12 snapshots, with the current data as the final point (replacing this
+    // dataDate's own snapshot if one was written, so a stale file cannot disagree)
+    let kpiSeries: ReportData["kpiSeries"] = null;
+    const trail = history.filter(s => s.dataDate < dataDate).slice(-11);
+    if (trail.length >= 2) {
+        kpiSeries = Object.fromEntries(
+            (Object.keys(kpis) as Array<keyof Kpis>).map(key => [key, [...trail.map(s => s.kpis[key]), kpis[key]]])
+        ) as Record<keyof Kpis, number[]>;
+    }
+
     return {
         generated: new Date().toISOString().slice(0, 10),
         dataDate,
-        kpis: deriveKpis(addons, summary),
+        kpis,
         previous,
+        kpiSeries,
         corpus: plugins + themes,
         metaFields: [...metaFieldAddons.entries()]
             .map(([field, count]) => ({field, addons: count, known: isKnownField(field), required: isRequiredField(field)}))
@@ -243,6 +259,23 @@ function deltaLine(current: number, previous: number | undefined, since: string 
     if (change === 0) return `<div class="delta">no change since ${since}</div>`;
     const good = lowerIsBetter && change < 0;
     return `<div class="delta${good ? " good" : ""}">${change > 0 ? "+" : "&minus;"}${fmt(Math.abs(change))} since ${since}</div>`;
+}
+
+// Tile sparkline: trend in the de-emphasis hue, the current value as an accent end-dot
+// with a surface ring. Skipped for all-zero series — a flat floor line is noise, not trend.
+function spark(values: number[] | undefined): string {
+    if (!values || values.length < 3 || Math.max(...values) === 0) return "";
+    const w = 72;
+    const h = 20;
+    const pad = 4;
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const x = (i: number) => pad + (i / (values.length - 1)) * (w - 2 * pad);
+    const y = (v: number) => max === min ? h / 2 : pad + (1 - (v - min) / (max - min)) * (h - 2 * pad);
+    const points = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+    const endX = x(values.length - 1).toFixed(1);
+    const endY = y(values[values.length - 1]).toFixed(1);
+    return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="trend across ${values.length} snapshots">` + `<polyline points="${points}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` + `<circle cx="${endX}" cy="${endY}" r="3.5" fill="var(--surface)"/>` + `<circle cx="${endX}" cy="${endY}" r="2.2" fill="var(--accent)"/>` + `</svg>`;
 }
 
 // Table cell version: blank when there is no history to compare against
@@ -330,6 +363,7 @@ function metaProblemTable(rows: ReportData["metaProblems"]): string {
 
 function render(d: ReportData): string {
     const k = d.kpis;
+    const series = d.kpiSeries;
     const p = d.previous?.kpis;
     const since = d.previous?.dataDate;
     const prevRequires = asRecord(d.previous?.summary.requires);
@@ -374,6 +408,7 @@ h2 { font-size: 16px; margin: 0 0 2px; }
 .tile .value { font-size: 26px; font-weight: 600; margin: 2px 0; }
 .tile .delta { font-size: 12px; color: var(--ink-2); }
 .tile .delta.good { color: var(--good); }
+.tile .spark { display: block; margin-top: 6px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; }
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
@@ -405,16 +440,16 @@ footer ul { padding-left: 18px; }
 <p class="sub">Official store corpus &middot; report generated ${d.generated} &middot; addon data updated ${d.dataDate}</p>
 
 <div class="kpis">
-    <div class="tile"><div class="label">Plugins analyzed</div><div class="value">${fmt(k.plugins)}</div>${deltaLine(k.plugins, p?.plugins, since, false)}</div>
-    <div class="tile"><div class="label">Themes analyzed</div><div class="value">${fmt(k.themes)}</div>${deltaLine(k.themes, p?.themes, since, false)}</div>
-    <div class="tile"><div class="label">Authors</div><div class="value">${fmt(k.authors)}</div>${deltaLine(k.authors, p?.authors, since, false)}</div>
-    <div class="tile"><div class="label">Parse errors</div><div class="value">${fmt(k.parseErrors)}</div><div class="delta${k.parseErrors === 0 ? " good" : ""}">${k.parseErrors === 0 ? "&#10003; full AST coverage" : "plugins skipped"}</div></div>
-    <div class="tile"><div class="label">Legacy API uses</div><div class="value">${fmt(k.deprecatedUses)}</div><div class="delta${k.deprecatedUses === 0 ? " good" : ""}">${k.deprecatedUses === 0 ? "&#10003; old-old APIs are gone" : "see bdapi table"}</div></div>
-    <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(k.requirePlugins)}</div>${deltaLine(k.requirePlugins, p?.requirePlugins, since, true, "plugins on the polyfill")}</div>
-    <div class="tile"><div class="label">Flagged for review</div><div class="value">${fmt(k.flagged)}</div>${deltaLine(k.flagged, p?.flagged, since, true, "bundled / packed code")}</div>
-    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(k.fragileAddons)}</div>${deltaLine(k.fragileAddons, p?.fragileAddons, since, true, "addons breaking on class churn")}</div>
-    <div class="tile"><div class="label">Malformed meta</div><div class="value">${fmt(k.metaProblemAddons)}</div>${deltaLine(k.metaProblemAddons, p?.metaProblemAddons, since, true, "addons with meta problems")}</div>
-    <div class="tile"><div class="label">Self-installing</div><div class="value">${fmt(k.selfUpdating)}</div>${deltaLine(k.selfUpdating, p?.selfUpdating, since, true, "plugins writing plugin files")}</div>
+    <div class="tile"><div class="label">Plugins analyzed</div><div class="value">${fmt(k.plugins)}</div>${deltaLine(k.plugins, p?.plugins, since, false)}${spark(series?.plugins)}</div>
+    <div class="tile"><div class="label">Themes analyzed</div><div class="value">${fmt(k.themes)}</div>${deltaLine(k.themes, p?.themes, since, false)}${spark(series?.themes)}</div>
+    <div class="tile"><div class="label">Authors</div><div class="value">${fmt(k.authors)}</div>${deltaLine(k.authors, p?.authors, since, false)}${spark(series?.authors)}</div>
+    <div class="tile"><div class="label">Parse errors</div><div class="value">${fmt(k.parseErrors)}</div><div class="delta${k.parseErrors === 0 ? " good" : ""}">${k.parseErrors === 0 ? "&#10003; full AST coverage" : "plugins skipped"}</div>${spark(series?.parseErrors)}</div>
+    <div class="tile"><div class="label">Legacy API uses</div><div class="value">${fmt(k.deprecatedUses)}</div><div class="delta${k.deprecatedUses === 0 ? " good" : ""}">${k.deprecatedUses === 0 ? "&#10003; old-old APIs are gone" : "see bdapi table"}</div>${spark(series?.deprecatedUses)}</div>
+    <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(k.requirePlugins)}</div>${deltaLine(k.requirePlugins, p?.requirePlugins, since, true, "plugins on the polyfill")}${spark(series?.requirePlugins)}</div>
+    <div class="tile"><div class="label">Bundled / packed code</div><div class="value">${fmt(k.flagged)}</div>${deltaLine(k.flagged, p?.flagged, since, true, "plugins, by heuristic")}${spark(series?.flagged)}</div>
+    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(k.fragileAddons)}</div>${deltaLine(k.fragileAddons, p?.fragileAddons, since, true, "addons breaking on class churn")}${spark(series?.fragileAddons)}</div>
+    <div class="tile"><div class="label">Malformed meta</div><div class="value">${fmt(k.metaProblemAddons)}</div>${deltaLine(k.metaProblemAddons, p?.metaProblemAddons, since, true, "addons with meta problems")}${spark(series?.metaProblemAddons)}</div>
+    <div class="tile"><div class="label">Self-installing</div><div class="value">${fmt(k.selfUpdating)}</div>${deltaLine(k.selfUpdating, p?.selfUpdating, since, true, "plugins writing plugin files")}${spark(series?.selfUpdating)}</div>
 </div>
 
 <div class="card">
@@ -515,7 +550,7 @@ footer ul { padding-left: 18px; }
             </tbody></table>
         </div>
         <div>
-            <h2>Obfuscation signals</h2>
+            <h2>Bundling / packing signals</h2>
             <table><thead><tr><th>Signal</th><th></th><th class="num">Plugins</th></tr></thead><tbody>
             ${d.obfuscationSignals.map(s => `<tr><td>${escapeHtml(s.name)}</td><td class="bar-cell">${bar(s.plugins, d.obfuscationSignals[0]?.plugins ?? 0)}</td><td class="num">${fmt(s.plugins)}</td></tr>`).join("")}
             </tbody></table>
@@ -527,8 +562,8 @@ footer ul { padding-left: 18px; }
         ? `<details><summary>Show all ${d.selfUpdaters.length}</summary><ul>${d.selfUpdaters.map(s => `<li>${escapeHtml(s)}</li>`).join("")}</ul></details>`
         : `<p class="muted">none found</p>`}
 
-    <h2 style="margin-top:16px">Flagged for manual review (${d.flagged.length})</h2>
-    <p class="note">Heuristic score &ge; 0.4 — indicates bundled, minified, or packed code worth a manual look, <em>not</em> malice.</p>
+    <h2 style="margin-top:16px">Bundled / minified code (${d.flagged.length})</h2>
+    <p class="note">Heuristic score &ge; 0.4 — code that resists reading because it is bundled, minified, or packed. This measures <em>readability, not safety</em>: every addon here passed the store's normal review, and build tooling is the usual cause.</p>
     <table><thead><tr><th>Plugin</th><th>Signals</th></tr></thead><tbody>
     ${d.flagged.map(f => `<tr><td>${escapeHtml(f.name)}</td><td>${f.signals.map(s => `<span class="chip">${escapeHtml(s)}</span>`).join("")}</td></tr>`).join("")}
     </tbody></table>
