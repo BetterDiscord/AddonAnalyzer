@@ -1,15 +1,31 @@
 import type {ESTree} from "meriyah";
-import {calleeOf} from "../helpers";
+import {calleeOf, memberChain, resolveChain, stripGlobal} from "../helpers";
 import {Type} from "../../types";
-import {type Rule} from "../types";
+import {type Rule, type RuleContext} from "../types";
 
 
-function dynamicCodeKind(node: ESTree.Node): string | null {
+/**
+ * Canonical name of a dynamic-code sink, or null.
+ *
+ * The callee is resolved the same way every other call-site rule resolves one, so
+ * `window.eval(src)` and `const F = Function; F(src)` count alongside the bare forms.
+ * Both roots are ordinary shadowable names — `function f(Function) {...}` — so a
+ * shadowed root disqualifies, matching `react-hazards`. `declared` is deliberately
+ * NOT checked: `const Function = ...` at file scope is not a thing real code does,
+ * while `const F = Function` (a declaration of the alias) is exactly what should match.
+ */
+function dynamicCodeKind(node: ESTree.Node, context: RuleContext): string | null {
     if (node.type !== "CallExpression" && node.type !== "NewExpression") return null;
-    const callee = calleeOf(node);
-    if (callee.type !== "Identifier") return null;
-    if (callee.name === "eval" && node.type === "CallExpression") return "eval";
-    if (callee.name === "Function") return "Function";
+
+    const raw = memberChain(calleeOf(node));
+    if (!raw) return null;
+
+    const resolved = stripGlobal(resolveChain(stripGlobal(raw), context.aliases));
+    if (resolved.length !== 1 || context.shadowed.has(resolved[0])) return null;
+
+    // `new eval()` is a TypeError, so eval only counts as a call
+    if (resolved[0] === "eval" && node.type === "CallExpression") return "eval";
+    if (resolved[0] === "Function") return "Function";
     return null;
 }
 
@@ -17,12 +33,12 @@ export const evalRule: Rule = {
     name: "eval",
     appliesTo: [Type.Plugin],
 
-    match(node) {
-        return dynamicCodeKind(node) !== null;
+    match(node, context) {
+        return dynamicCodeKind(node, context) !== null;
     },
 
     report(node, context) {
-        const kind = dynamicCodeKind(node);
+        const kind = dynamicCodeKind(node, context);
         if (!kind) return null;
 
         return {
