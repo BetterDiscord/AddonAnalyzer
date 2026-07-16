@@ -424,7 +424,7 @@ footer ul { padding-left: 18px; }
     ${d.requires.map(r => `<tr><td><code>require("${escapeHtml(r.module)}")</code></td><td class="bar-cell">${bar(r.plugins.length, d.requires[0]?.plugins.length ?? 0)}</td><td class="num">${fmt(r.plugins.length)}</td><td class="num muted">${fmt(r.calls)}</td>${deltaCell(r.calls, prevRequires[r.module], true)}</tr>
     <tr><td colspan="5" style="border-bottom:1px solid var(--hairline)"><details><summary>Plugins requiring <code>${escapeHtml(r.module)}</code></summary><ul>${r.plugins.map(name => `<li>${escapeHtml(name)}</li>`).join("")}</ul></details></td></tr>`).join("")}
     </tbody></table>
-    ${since ? `<p class="note">&Delta; compares against the ${since} snapshot.</p>` : `<p class="note">No earlier snapshot yet &mdash; deltas appear once a second data date is recorded in <code>results/history/</code>.</p>`}
+    ${since ? `<p class="note">&Delta; compares against the ${since} snapshot.</p>` : `<p class="note">No earlier snapshot yet &mdash; deltas appear once a second data date is recorded in <code>history/</code>.</p>`}
 </div>
 
 <div class="card">
