@@ -1,11 +1,9 @@
 import type {ESTree} from "meriyah";
-import {evalExpr} from "../../evaluator/core";
 import {interpretProgram} from "../../evaluator/interpret";
-import type {PEScope} from "../../evaluator/model";
+import {DYNAMIC_SEGMENT, partialString} from "../../evaluator/strings";
 import {Type} from "../../types";
 import {calleeOf, memberChain, resolveChain, stripGlobal} from "../helpers";
 import {type Finding, type Rule} from "../types";
-import {DYNAMIC_SEGMENT} from "./remoteurls";
 
 
 const URL_PATTERN = /^(https?|wss?):\/\//;
@@ -32,44 +30,6 @@ function normalizeUrl(raw: string): string | null {
     if (URL_PATTERN.test(url)) return url;
     if (url.startsWith("//")) return "https:" + url;
     if (url.startsWith("/") && !url.startsWith("/*")) return "https://discord.com" + url;
-    return null;
-}
-
-// Best-effort string of an expression: unknown segments become ${…} so a static
-// host prefix survives even when the path is computed at runtime
-function partialString(node: ESTree.Node, scope: PEScope): {text: string, exact: boolean} | null {
-    const value = evalExpr(node, scope);
-    if (value.kind === "string") return {text: value.value, exact: true};
-    if (value.kind === "number" || value.kind === "boolean") return {text: String(value.value), exact: true};
-
-    if (node.type === "TemplateLiteral") {
-        let text = "";
-        let exact = true;
-        for (let i = 0; i < node.quasis.length; i++) {
-            text += node.quasis[i].value.cooked ?? node.quasis[i].value.raw;
-            const expression = node.expressions[i];
-            if (expression) {
-                const part = partialString(expression, scope);
-                if (part) {
-                    text += part.text;
-                    exact &&= part.exact;
-                }
-                else {
-                    text += DYNAMIC_SEGMENT;
-                    exact = false;
-                }
-            }
-        }
-        return {text, exact};
-    }
-
-    if (node.type === "BinaryExpression" && node.operator === "+") {
-        const left = partialString(node.left, scope);
-        if (!left) return null;
-        const right = partialString(node.right, scope) ?? {text: DYNAMIC_SEGMENT, exact: false};
-        return {text: left.text + right.text, exact: left.exact && right.exact};
-    }
-
     return null;
 }
 

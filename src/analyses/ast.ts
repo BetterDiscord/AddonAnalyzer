@@ -1,5 +1,5 @@
 import {analyzeAddon, rules, type Finding} from "../ast";
-import {DYNAMIC_SEGMENT} from "../ast/rules/remoteurls";
+import {DYNAMIC_SEGMENT} from "../evaluator/strings";
 import {Type, type Analysis, type CachedAddon} from "../types";
 
 
@@ -129,6 +129,74 @@ export const classLiterals: Analysis = {
     key: "class-literals",
     types: [Type.Plugin, Type.Theme],
     run: (addon) => getFindings(addon).filter(f => f.rule === "class-literals").length
+};
+
+// Two independent signals for a plugin that installs executable code: a write into a .plugin.js
+// path, and a fetch of a .plugin.js URL. The fetch side reuses the network/remote-url findings
+// rather than re-walking — those rules already resolve URLs through the evaluator.
+function selfUpdateSignals(addon: CachedAddon): Set<string> {
+    const signals = new Set<string>();
+    for (const finding of getFindings(addon)) {
+        if (finding.rule === "self-update") signals.add(String(finding.details?.signal));
+        if (finding.rule === "network-url" || finding.rule === "remote-url") {
+            if (String(finding.details?.url).endsWith(".plugin.js")) signals.add("fetches-plugin-file");
+        }
+    }
+    return signals;
+}
+
+// Either signal alone is weak: plugins write non-plugin files, and a .plugin.js URL is often
+// just a @source link. The pair is what makes a self-installer, so the boolean needs both.
+export const selfUpdating: Analysis = {
+    key: "self-updating",
+    types: [Type.Plugin],
+    run: (addon) => {
+        const signals = selfUpdateSignals(addon);
+        return signals.has("writes-plugin-file") && signals.has("fetches-plugin-file");
+    }
+};
+
+// The same signals unrolled, so the report can show which half a partial match has
+export const selfUpdateSignalCounts: Analysis = {
+    key: "self-update-signals",
+    types: [Type.Plugin],
+    run(addon) {
+        const present: Record<string, number> = {};
+        for (const signal of selfUpdateSignals(addon)) present[signal] = 1;
+        return present;
+    }
+};
+
+// Presence flags per addon, so the summary reads as "addons shipping this meta field"
+export const metaFields: Analysis = {
+    key: "meta-fields",
+    types: [Type.Plugin, Type.Theme],
+    run(addon) {
+        const present: Record<string, number> = {};
+        for (const finding of getFindings(addon)) {
+            if (finding.rule !== "meta" || finding.details?.kind !== "field") continue;
+            present[String(finding.details.field)] = 1;
+        }
+        return present;
+    }
+};
+
+// Malformations keyed as "<problem>:<field>" (or bare "<problem>" where no field applies),
+// so one record carries missing/duplicate/empty/invalid-version/invalid-url/no-meta-block
+export const metaProblems: Analysis = {
+    key: "meta-problems",
+    types: [Type.Plugin, Type.Theme],
+    run(addon) {
+        const counts: Record<string, number> = {};
+        for (const finding of getFindings(addon)) {
+            if (finding.rule !== "meta" || finding.details?.kind !== "problem") continue;
+            const problem = String(finding.details.problem);
+            const field = finding.details.field as string | undefined; // set by the meta rule
+            const key = field ? `${problem}:${field}` : problem;
+            counts[key] = (counts[key] ?? 0) + 1;
+        }
+        return counts;
+    }
 };
 
 // Presence flags (not raw counts), so the summary reads as "addons exhibiting this signal"

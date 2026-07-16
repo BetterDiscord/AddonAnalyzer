@@ -1,12 +1,10 @@
 import type {ESTree} from "meriyah";
+import {DYNAMIC_SEGMENT} from "../../evaluator/strings";
 import {Type} from "../../types";
 import {type Rule} from "../types";
 
 
 const URL_PATTERN = /^https?:\/\//;
-
-// eslint-disable-next-line no-template-curly-in-string
-export const DYNAMIC_SEGMENT = "${…}";
 
 function extractUrl(node: ESTree.Node): {url: string, exact: boolean} | null {
     if (node.type === "Literal" && typeof node.value === "string" && URL_PATTERN.test(node.value)) {
