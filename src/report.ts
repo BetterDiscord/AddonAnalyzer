@@ -1,13 +1,13 @@
 import fs from "fs/promises";
 import path from "path";
+import {isKnownField, isRequiredField} from "./ast/rules/meta";
 import {isHazardMethod} from "./ast/rules/reacthazards";
-import {DYNAMIC_SEGMENT} from "./ast/rules/remoteurls";
 import {cacheFolder, resultsFolder} from "./constants";
+import {DYNAMIC_SEGMENT} from "./evaluator/strings";
+import {deriveKpis, readHistory, type AddonsJson, type Kpis, type Snapshot, type SummaryJson} from "./history";
 
 
 type ResultValue = Record<string, number> | number | boolean | string[];
-type SummaryJson = Record<string, ResultValue>;
-type AddonsJson = Record<string, Record<string, Record<string, ResultValue>>>;
 
 interface HostStats {refs: number; addons: Set<string>;}
 
@@ -28,11 +28,15 @@ function asRecord(value: ResultValue | undefined): Record<string, number> {
 interface ReportData {
     generated: string;
     dataDate: string;
-    authors: number;
-    plugins: number;
-    themes: number;
-    parseErrors: number;
-    deprecatedUses: number;
+    kpis: Kpis;
+
+    // Second-newest distinct dataDate, or null on a first run / fresh checkout. Everything
+    // delta-shaped must tolerate null: history is a bonus, never a precondition for rendering.
+    previous: Snapshot | null;
+    corpus: number;
+    metaFields: Array<{field: string, addons: number, known: boolean, required: boolean}>;
+    metaProblems: Array<{problem: string, field: string, addons: string[]}>;
+    selfUpdaters: string[];
     namespaces: Array<{name: string, calls: number, plugins: number}>;
     apis: Array<{api: string, calls: number, plugins: number}>;
     requires: Array<{module: string, calls: number, plugins: string[]}>;
@@ -65,6 +69,9 @@ async function assemble(): Promise<ReportData> {
     const patcherPlugins = new Map<string, number>();
     const globalPlugins = new Map<string, number>();
     const reactPlugins = new Map<string, number>();
+    const metaFieldAddons = new Map<string, number>();
+    const metaProblemAddons = new Map<string, string[]>();
+    const selfUpdaters: string[] = [];
     const fragile: ReportData["fragile"] = [];
     const flagged: Array<{name: string, signals: string[]}> = [];
 
@@ -107,6 +114,15 @@ async function assemble(): Promise<ReportData> {
             for (const method of Object.keys(asRecord(results["react-hazards"]))) {
                 reactPlugins.set(method, (reactPlugins.get(method) ?? 0) + 1);
             }
+            for (const field of Object.keys(asRecord(results["meta-fields"]))) {
+                metaFieldAddons.set(field, (metaFieldAddons.get(field) ?? 0) + 1);
+            }
+            for (const problem of Object.keys(asRecord(results["meta-problems"]))) {
+                if (!metaProblemAddons.has(problem)) metaProblemAddons.set(problem, []);
+                metaProblemAddons.get(problem)!.push(name);
+            }
+            if (results["self-updating"] === true) selfUpdaters.push(name);
+
             const tokens = results["class-literals"];
             if (typeof tokens === "number" && tokens > 0) {
                 fragile.push({name, tokens, type: file.endsWith(".plugin.js") ? "plugin" : "theme"});
@@ -152,14 +168,31 @@ async function assemble(): Promise<ReportData> {
     const webpackCalls = asRecord(summary["webpack-targets"]);
     const patcherCalls = asRecord(summary["patcher-targets"]);
 
+    const dataDate = meta.lastUpdated.slice(0, 10);
+
+    // The newest snapshot is this run's own data; "previous" is the newest older dataDate.
+    // Comparing against a snapshot with the same dataDate would always show a delta of zero.
+    const history = await readHistory();
+    const previous = history.filter(s => s.dataDate < dataDate).pop() ?? null;
+
     return {
         generated: new Date().toISOString().slice(0, 10),
-        dataDate: meta.lastUpdated.slice(0, 10),
-        authors: Object.keys(addons).length,
-        plugins,
-        themes,
-        parseErrors: typeof summary["parse-errors"] === "number" ? summary["parse-errors"] : 0,
-        deprecatedUses: Object.values(asRecord(summary["deprecated-apis"])).reduce((a, b) => a + b, 0),
+        dataDate,
+        kpis: deriveKpis(addons, summary),
+        previous,
+        corpus: plugins + themes,
+        metaFields: [...metaFieldAddons.entries()]
+            .map(([field, count]) => ({field, addons: count, known: isKnownField(field), required: isRequiredField(field)}))
+            .sort((a, b) => b.addons - a.addons),
+        metaProblems: [...metaProblemAddons.entries()]
+            .map(([key, list]) => {
+                const split = key.indexOf(":");
+                return split === -1
+                    ? {problem: key, field: "", addons: list.sort()}
+                    : {problem: key.slice(0, split), field: key.slice(split + 1), addons: list.sort()};
+            })
+            .sort((a, b) => b.addons.length - a.addons.length),
+        selfUpdaters: selfUpdaters.sort(),
         namespaces: [...namespaceStats.entries()]
             .map(([name, s]) => ({name, calls: s.calls, plugins: s.plugins.size}))
             .sort((a, b) => b.calls - a.calls),
@@ -199,6 +232,26 @@ async function assemble(): Promise<ReportData> {
 function bar(value: number, max: number): string {
     const width = max === 0 ? 0 : Math.max(1.5, (value / max) * 100);
     return `<div class="bar" style="width:${width.toFixed(1)}%"></div>`;
+}
+
+// Green is reserved for movement in a direction the maintainers actually want. Corpus growth is
+// neutral (more plugins is not "good"), so it stays secondary ink; a dropping require count is
+// the campaign working. Nothing is ever coloured red — this report is not a scoreboard.
+function deltaLine(current: number, previous: number | undefined, since: string | undefined, lowerIsBetter: boolean, fallback = ""): string {
+    if (previous === undefined || since === undefined) return fallback ? `<div class="delta">${fallback}</div>` : "";
+    const change = current - previous;
+    if (change === 0) return `<div class="delta">no change since ${since}</div>`;
+    const good = lowerIsBetter && change < 0;
+    return `<div class="delta${good ? " good" : ""}">${change > 0 ? "+" : "&minus;"}${fmt(Math.abs(change))} since ${since}</div>`;
+}
+
+// Table cell version: blank when there is no history to compare against
+function deltaCell(current: number, previous: number | undefined, lowerIsBetter: boolean): string {
+    if (previous === undefined) return `<td class="num muted">&mdash;</td>`;
+    const change = current - previous;
+    if (change === 0) return `<td class="num muted">0</td>`;
+    const good = lowerIsBetter && change < 0;
+    return `<td class="num${good ? " good" : " muted"}">${change > 0 ? "+" : "&minus;"}${fmt(Math.abs(change))}</td>`;
 }
 
 function hostTable(rows: Array<{host: string, refs: number, addons: number}>, addonLabel: string, visible = 25): string {
@@ -242,10 +295,50 @@ function fragileTable(rows: ReportData["fragile"], visible = 15): string {
     return head + rows.slice(0, visible).map(row).join("") + tail;
 }
 
+// Field coverage: how much of the corpus ships each meta field, required ones first
+function metaFieldTable(rows: ReportData["metaFields"], corpus: number): string {
+    const order = (r: ReportData["metaFields"][number]) => (r.required ? 0 : r.known ? 1 : 2);
+    const sorted = rows.slice().sort((a, b) => order(a) - order(b) || b.addons - a.addons);
+    const row = (r: ReportData["metaFields"][number]) => {
+        const chip = r.required ? `<span class="chip">required</span>` : r.known ? "" : `<span class="chip">non-standard</span>`;
+        return `<tr><td><code>@${escapeHtml(r.field)}</code> ${chip}</td><td class="bar-cell">${bar(r.addons, corpus)}</td><td class="num">${fmt(r.addons)}</td><td class="num muted">${((r.addons / corpus) * 100).toFixed(0)}%</td></tr>`;
+    };
+    return `<table class="meta-fields"><thead><tr><th>Field</th><th></th><th class="num">Addons</th><th class="num">% of corpus</th></tr></thead><tbody>${sorted.map(row).join("")}</tbody></table>`;
+}
+
+const PROBLEM_LABELS: Record<string, string> = {
+    "no-meta-block": "No meta block on the first line",
+    "missing": "Missing required field",
+    "duplicate": "Field declared more than once",
+    "empty": "Field present but empty",
+    "invalid-version": "Version is not a version number",
+    "invalid-url": "Link field is not an http(s) URL",
+    "valueless-field": "Field written with no value"
+};
+
+function metaProblemTable(rows: ReportData["metaProblems"]): string {
+    if (!rows.length) return `<p class="muted">&#10003; no malformed meta blocks in the corpus</p>`;
+    return `<table><thead><tr><th>Problem</th><th class="num">Addons</th></tr></thead><tbody>
+    ${rows.map(r => {
+        const label = PROBLEM_LABELS[r.problem] ?? r.problem;
+        const field = r.field ? ` <code>@${escapeHtml(r.field)}</code>` : "";
+        return `<tr><td>${escapeHtml(label)}${field}</td><td class="num">${fmt(r.addons.length)}</td></tr>
+        <tr><td colspan="2"><details><summary>Which addons</summary><ul>${r.addons.map(a => `<li>${escapeHtml(a)}</li>`).join("")}</ul></details></td></tr>`;
+    }).join("")}
+    </tbody></table>`;
+}
+
 function render(d: ReportData): string {
+    const k = d.kpis;
+    const p = d.previous?.kpis;
+    const since = d.previous?.dataDate;
+    const prevRequires = asRecord(d.previous?.summary.requires);
     const nsMax = d.namespaces[0]?.calls ?? 0;
+    const prevApis = asRecord(d.previous?.summary["bdapi-usage"]);
+    // Neutral direction: this table measures the blast radius of an API change, and a rising
+    // call count is information, not a regression.
     const apiRow = (a: {api: string, calls: number, plugins: number}, max: number) =>
-        `<tr><td><code>${escapeHtml(a.api)}</code></td><td class="bar-cell">${bar(a.calls, max)}</td><td class="num">${fmt(a.calls)}</td><td class="num muted">${fmt(a.plugins)}</td></tr>`;
+        `<tr><td><code>${escapeHtml(a.api)}</code></td><td class="bar-cell">${bar(a.calls, max)}</td><td class="num">${fmt(a.calls)}</td><td class="num muted">${fmt(a.plugins)}</td>${deltaCell(a.calls, prevApis[a.api], false)}</tr>`;
     const apiMax = d.apis[0]?.calls ?? 0;
     const topApis = d.apis.slice(0, 30);
     const restApis = d.apis.slice(30);
@@ -290,8 +383,12 @@ td { padding: 5px 8px; border-bottom: 1px solid var(--hairline); vertical-align:
 tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .muted { color: var(--muted); }
+td.good { color: var(--good); }
 th.num { text-align: right; }
 .bar-cell { width: 34%; min-width: 90px; }
+/* field + chip must stay on one line in the narrow two-column card, so the bar yields width */
+.meta-fields td:first-child { white-space: nowrap; }
+.meta-fields .bar-cell { width: 20%; min-width: 50px; }
 .bar { height: 12px; background: var(--accent); border-radius: 0 4px 4px 0; }
 code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 12px; }
 .chip { display: inline-block; font-size: 11px; color: var(--ink-2); border: 1px solid var(--hairline); border-radius: 999px; padding: 1px 8px; margin: 1px 2px 1px 0; }
@@ -308,23 +405,26 @@ footer ul { padding-left: 18px; }
 <p class="sub">Official store corpus &middot; report generated ${d.generated} &middot; addon data updated ${d.dataDate}</p>
 
 <div class="kpis">
-    <div class="tile"><div class="label">Plugins analyzed</div><div class="value">${fmt(d.plugins)}</div></div>
-    <div class="tile"><div class="label">Themes analyzed</div><div class="value">${fmt(d.themes)}</div></div>
-    <div class="tile"><div class="label">Authors</div><div class="value">${fmt(d.authors)}</div></div>
-    <div class="tile"><div class="label">Parse errors</div><div class="value">${fmt(d.parseErrors)}</div><div class="delta${d.parseErrors === 0 ? " good" : ""}">${d.parseErrors === 0 ? "&#10003; full AST coverage" : "plugins skipped"}</div></div>
-    <div class="tile"><div class="label">Legacy API uses</div><div class="value">${fmt(d.deprecatedUses)}</div><div class="delta${d.deprecatedUses === 0 ? " good" : ""}">${d.deprecatedUses === 0 ? "&#10003; old-old APIs are gone" : "see bdapi table"}</div></div>
-    <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(new Set(d.requires.flatMap(r => r.plugins)).size)}</div><div class="delta">plugins on the polyfill</div></div>
-    <div class="tile"><div class="label">Flagged for review</div><div class="value">${fmt(d.flagged.length)}</div><div class="delta">bundled / packed code</div></div>
-    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(d.fragileAddons)}</div><div class="delta">addons breaking on class churn</div></div>
+    <div class="tile"><div class="label">Plugins analyzed</div><div class="value">${fmt(k.plugins)}</div>${deltaLine(k.plugins, p?.plugins, since, false)}</div>
+    <div class="tile"><div class="label">Themes analyzed</div><div class="value">${fmt(k.themes)}</div>${deltaLine(k.themes, p?.themes, since, false)}</div>
+    <div class="tile"><div class="label">Authors</div><div class="value">${fmt(k.authors)}</div>${deltaLine(k.authors, p?.authors, since, false)}</div>
+    <div class="tile"><div class="label">Parse errors</div><div class="value">${fmt(k.parseErrors)}</div><div class="delta${k.parseErrors === 0 ? " good" : ""}">${k.parseErrors === 0 ? "&#10003; full AST coverage" : "plugins skipped"}</div></div>
+    <div class="tile"><div class="label">Legacy API uses</div><div class="value">${fmt(k.deprecatedUses)}</div><div class="delta${k.deprecatedUses === 0 ? " good" : ""}">${k.deprecatedUses === 0 ? "&#10003; old-old APIs are gone" : "see bdapi table"}</div></div>
+    <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(k.requirePlugins)}</div>${deltaLine(k.requirePlugins, p?.requirePlugins, since, true, "plugins on the polyfill")}</div>
+    <div class="tile"><div class="label">Flagged for review</div><div class="value">${fmt(k.flagged)}</div>${deltaLine(k.flagged, p?.flagged, since, true, "bundled / packed code")}</div>
+    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(k.fragileAddons)}</div>${deltaLine(k.fragileAddons, p?.fragileAddons, since, true, "addons breaking on class churn")}</div>
+    <div class="tile"><div class="label">Malformed meta</div><div class="value">${fmt(k.metaProblemAddons)}</div>${deltaLine(k.metaProblemAddons, p?.metaProblemAddons, since, true, "addons with meta problems")}</div>
+    <div class="tile"><div class="label">Self-installing</div><div class="value">${fmt(k.selfUpdating)}</div>${deltaLine(k.selfUpdating, p?.selfUpdating, since, true, "plugins writing plugin files")}</div>
 </div>
 
 <div class="card">
     <h2>require() usage — polyfill retirement list</h2>
     <p class="note">BetterDiscord has no real <code>require</code>; these modules are served by the polyfill. Each list names the plugins to migrate before it can be removed. Plugins also reach the same environment without <code>require</code> &mdash; see Environment coupling below.</p>
-    <table><thead><tr><th>Module</th><th></th><th class="num">Plugins</th><th class="num">Calls</th></tr></thead><tbody>
-    ${d.requires.map(r => `<tr><td><code>require("${escapeHtml(r.module)}")</code></td><td class="bar-cell">${bar(r.plugins.length, d.requires[0]?.plugins.length ?? 0)}</td><td class="num">${fmt(r.plugins.length)}</td><td class="num muted">${fmt(r.calls)}</td></tr>
-    <tr><td colspan="4" style="border-bottom:1px solid var(--hairline)"><details><summary>Plugins requiring <code>${escapeHtml(r.module)}</code></summary><ul>${r.plugins.map(p => `<li>${escapeHtml(p)}</li>`).join("")}</ul></details></td></tr>`).join("")}
+    <table><thead><tr><th>Module</th><th></th><th class="num">Plugins</th><th class="num">Calls</th><th class="num">&Delta; calls</th></tr></thead><tbody>
+    ${d.requires.map(r => `<tr><td><code>require("${escapeHtml(r.module)}")</code></td><td class="bar-cell">${bar(r.plugins.length, d.requires[0]?.plugins.length ?? 0)}</td><td class="num">${fmt(r.plugins.length)}</td><td class="num muted">${fmt(r.calls)}</td>${deltaCell(r.calls, prevRequires[r.module], true)}</tr>
+    <tr><td colspan="5" style="border-bottom:1px solid var(--hairline)"><details><summary>Plugins requiring <code>${escapeHtml(r.module)}</code></summary><ul>${r.plugins.map(name => `<li>${escapeHtml(name)}</li>`).join("")}</ul></details></td></tr>`).join("")}
     </tbody></table>
+    ${since ? `<p class="note">&Delta; compares against the ${since} snapshot.</p>` : `<p class="note">No earlier snapshot yet &mdash; deltas appear once a second data date is recorded in <code>results/history/</code>.</p>`}
 </div>
 
 <div class="card">
@@ -351,7 +451,7 @@ footer ul { padding-left: 18px; }
     ${d.namespaces.map(n => `<tr><td><code>BdApi.${escapeHtml(n.name)}</code></td><td class="bar-cell">${bar(n.calls, nsMax)}</td><td class="num">${fmt(n.calls)}</td><td class="num muted">${fmt(n.plugins)}</td></tr>`).join("")}
     </tbody></table>
     <details><summary>Top individual APIs (${fmt(d.apis.length)} distinct)</summary>
-    <table><thead><tr><th>API</th><th></th><th class="num">Calls</th><th class="num">Plugins</th></tr></thead><tbody>
+    <table><thead><tr><th>API</th><th></th><th class="num">Calls</th><th class="num">Plugins</th><th class="num">&Delta;</th></tr></thead><tbody>
     ${topApis.map(a => apiRow(a, apiMax)).join("")}
     </tbody></table>
     ${restApis.length ? `<details><summary>Show all ${fmt(restApis.length)} remaining APIs</summary><table><tbody>${restApis.map(a => apiRow(a, apiMax)).join("")}</tbody></table></details>` : ""}
@@ -386,6 +486,22 @@ footer ul { padding-left: 18px; }
 </div>
 
 <div class="card">
+    <h2>Meta health</h2>
+    <p class="note">Every addon opens with a JSDoc meta block, parsed by BetterDiscord's <code>parseJsDoc</code>. This table is what BD itself sees: the same parser runs here, so a field listed as present is a field BD resolves. <code>@name</code>, <code>@author</code>, <code>@description</code> and <code>@version</code> are required; BD papers over the last three at load time with <code>Unknown Author</code> / <code>???</code> / <code>No description</code>, so a missing one degrades the UI rather than failing outright. Non-standard fields are author or library conventions BD ignores &mdash; they are listed for coverage, not judged.</p>
+    <div class="cols">
+        <div>
+            <h2>Field coverage</h2>
+            ${metaFieldTable(d.metaFields, d.corpus)}
+        </div>
+        <div>
+            <h2>Problems (${fmt(d.metaProblems.reduce((a, r) => a + r.addons.length, 0))} across ${fmt(k.metaProblemAddons)} addons)</h2>
+            <p class="note">Only fields BD consumes are validated. Duplicated <em>non-standard</em> fields are conventions (DevilBro's <code>@var</code> theme settings, <code>@changelog</code>) and are not counted as defects.</p>
+            ${metaProblemTable(d.metaProblems)}
+        </div>
+    </div>
+</div>
+
+<div class="card">
     <h2>Security signals</h2>
     <div class="cols">
         <div>
@@ -405,6 +521,12 @@ footer ul { padding-left: 18px; }
             </tbody></table>
         </div>
     </div>
+    <h2 style="margin-top:16px">Self-installing plugins (${d.selfUpdaters.length})</h2>
+    <p class="note">Plugins that both fetch a <code>.plugin.js</code> URL and write a <code>.plugin.js</code> path &mdash; they install executable code outside the store's review path, which is the supply-chain surface worth keeping a list of. Both signals are required: a <code>.plugin.js</code> URL on its own is usually just a <code>@source</code> link, and a write on its own is usually a data file. In this corpus the whole list is the BDFDB library downloader that every DevilBro addon ships, which fetches <code>0BDFDB.plugin.js</code> and writes it into <code>BdApi.Plugins.folder</code> &mdash; a library bootstrap rather than literal self-update.</p>
+    ${d.selfUpdaters.length
+        ? `<details><summary>Show all ${d.selfUpdaters.length}</summary><ul>${d.selfUpdaters.map(s => `<li>${escapeHtml(s)}</li>`).join("")}</ul></details>`
+        : `<p class="muted">none found</p>`}
+
     <h2 style="margin-top:16px">Flagged for manual review (${d.flagged.length})</h2>
     <p class="note">Heuristic score &ge; 0.4 — indicates bundled, minified, or packed code worth a manual look, <em>not</em> malice.</p>
     <table><thead><tr><th>Plugin</th><th>Signals</th></tr></thead><tbody>

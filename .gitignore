@@ -1,4 +1,7 @@
-results/
+# results/* rather than results/: git cannot re-include a path whose parent directory is
+# excluded, so the history carve-out below only works if the directory itself stays listable
+results/*
+!results/history/
 .cache/
 node_modules/
 notes/
