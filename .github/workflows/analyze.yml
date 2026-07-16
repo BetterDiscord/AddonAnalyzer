@@ -29,14 +29,32 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # Downloads the full addon corpus and resolves theme @imports, so it needs
-      # network and takes a few minutes. A store-API hiccup fails the run; the
-      # snapshot cadence tolerates that — rerun via workflow_dispatch or wait a week.
+      # Pin the addon corpus for the ISO week (weeks start Monday, same as the cron):
+      # the Monday run misses, downloads fresh, and saves; later runs that week reuse
+      # it, so their snapshots carry the same dataDate and identical data — matching
+      # how the local weekly cache behaves. Eviction just means one extra download.
+      - name: Compute cache week
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: addon-corpus-${{ steps.week.outputs.week }}
+
+      # On a cache miss this downloads the full corpus; either way the imports
+      # analysis resolves theme @imports live, so every run needs network. A
+      # store-API hiccup fails the run; rerun via workflow_dispatch or wait a week.
       - run: bun run analyze
 
-      # Snapshots are keyed by the cache's data date, so re-runs against unchanged
-      # data produce no diff and this commit step is a no-op.
+      # With the corpus cached, a mid-week push produces the same snapshot and this
+      # would no-op — but the gate still matters for two cases: a push that changes
+      # analysis code (same dataDate, different numbers — it must not silently rewrite
+      # the committed Monday snapshot) and a cache eviction (fresh download stamps the
+      # push day, an off-cadence dataDate). Only cron and a deliberate manual dispatch
+      # (e.g. recovering a failed Monday) persist history; push runs just redeploy.
       - name: Commit history snapshot
+        if: github.event_name != 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -58,4 +76,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
