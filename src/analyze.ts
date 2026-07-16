@@ -57,6 +57,8 @@ async function aggregate(results: OverallResults) {
         }
     }
 
+    // results/ is gitignored, so a fresh checkout (e.g. a CI runner) starts without it
+    await fs.mkdir(resultsFolder, {recursive: true});
     await fs.writeFile(path.join(resultsFolder, "addons.json"), JSON.stringify(results, null, 4));
     await fs.writeFile(path.join(resultsFolder, "authors.json"), JSON.stringify(byAuthor, null, 4));
     await fs.writeFile(path.join(resultsFolder, "summary.json"), JSON.stringify(summary, null, 4));

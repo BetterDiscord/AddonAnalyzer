@@ -85,7 +85,21 @@ export async function writeSnapshot(): Promise<Snapshot> {
     };
 
     await fs.mkdir(historyFolder, {recursive: true});
-    await fs.writeFile(path.join(historyFolder, `${snapshot.dataDate}.json`), JSON.stringify(snapshot, null, 4));
+    const file = path.join(historyFolder, `${snapshot.dataDate}.json`);
+
+    // An unchanged re-run must not dirty the file (or produce timestamp-only commits from CI):
+    // when the data is identical, keep the existing snapshot and its original `generated`.
+    try {
+        const existing = JSON.parse(await fs.readFile(file, "utf8")) as Snapshot;
+        if (JSON.stringify([existing.kpis, existing.summary]) === JSON.stringify([snapshot.kpis, snapshot.summary])) {
+            return existing;
+        }
+    }
+    catch {
+        // no snapshot for this dataDate yet, or an unreadable one — write fresh either way
+    }
+
+    await fs.writeFile(file, JSON.stringify(snapshot, null, 4));
     return snapshot;
 }
 
