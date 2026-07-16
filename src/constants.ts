@@ -1,7 +1,8 @@
 import path from "path";
 
 
-export const workspaceRoot = path.dirname(process.env.npm_package_json!);
+// Relative to this file (src/constants.ts) so entry points work outside `bun run` scripts too
+export const workspaceRoot = path.dirname(import.meta.dir);
 export const cacheFolder = path.join(workspaceRoot, ".cache");
 export const addonFolder = path.join(cacheFolder, "addons");
 export const resultsFolder = path.join(workspaceRoot, "results");

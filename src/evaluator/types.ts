@@ -7,7 +7,3 @@ export type PEValue =
     | {kind: "unknown";};
 
 export const Unknown: PEValue = {kind: "unknown"};
-
-export function isUnknown(v: PEValue): boolean {
-    return v.kind === "unknown";
-}

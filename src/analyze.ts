@@ -16,7 +16,6 @@ export async function analyze() {
         const authorPath = path.join(addonFolder, author);
         if (!(await fs.stat(authorPath)).isDirectory()) continue;
         if (!results[author]) results[author] = {};
-        // console.log(`Processing addons by ${author}...`);
 
         const addonFiles = (await fs.readdir(authorPath)).filter(a => a.endsWith(".plugin.js") || a.endsWith(".theme.css"));
         for (let a = 0; a < addonFiles.length; a++) {
@@ -41,7 +40,6 @@ export async function analyze() {
     }
 
     await aggregate(results);
-    // console.log(results);
 }
 
 async function aggregate(results: OverallResults) {
