@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import {cacheFolder, historyFolder, resultsFolder} from "./constants";
+import {unusedPaths} from "./surface";
 import type {Results} from "./types";
 
 
@@ -23,6 +24,11 @@ export interface Kpis {
     fragileAddons: number;
     metaProblemAddons: number;
     selfUpdating: number;
+
+    // Declared BdApi members no addon calls. Manifest-relative, so this moves when BD ships or
+    // removes API as well as when the corpus adopts it — both are the point. Snapshots written
+    // before this KPI existed simply lack it; the report falls back rather than inventing a delta.
+    unusedApis: number;
 }
 
 export interface Snapshot {
@@ -49,7 +55,8 @@ export function deriveKpis(addons: AddonsJson, summary: SummaryJson): Kpis {
         flagged: 0,
         fragileAddons: 0,
         metaProblemAddons: 0,
-        selfUpdating: 0
+        selfUpdating: 0,
+        unusedApis: unusedPaths(Object.keys(asRecord(summary["bdapi-usage"]))).length
     };
 
     for (const author of Object.keys(addons)) {

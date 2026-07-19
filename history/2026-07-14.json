@@ -1,6 +1,6 @@
 {
     "dataDate": "2026-07-14",
-    "generated": "2026-07-16T01:50:12.946Z",
+    "generated": "2026-07-19T22:17:49.004Z",
     "kpis": {
         "plugins": 208,
         "themes": 115,
@@ -11,7 +11,8 @@
         "flagged": 13,
         "fragileAddons": 16,
         "metaProblemAddons": 10,
-        "selfUpdating": 48
+        "selfUpdating": 48,
+        "unusedApis": 27
     },
     "summary": {
         "class-literals": 14398,
@@ -988,6 +989,18 @@
             "innerHTML": 79,
             "outerHTML": 4
         },
+        "lifecycle": {
+            "stop": 189,
+            "start": 192,
+            "onSwitch": 9,
+            "getSettingsPanel": 136,
+            "getVersion": 51,
+            "getDescription": 51,
+            "getAuthor": 52,
+            "getName": 55,
+            "observer": 6,
+            "load": 70
+        },
         "network-urls": {
             "discord.com": 1,
             "nintendoeverything.com": 1,
@@ -1090,6 +1103,12 @@
             "handleVoiceConnect": 1,
             "handleBlockedOrIgnoredUserVoiceChannelJoin": 1,
             "_sendMessage": 1
+        },
+        "phantom-apis": {
+            "BdApi.settings": 4,
+            "BdApi.isSettingEnabled": 2,
+            "BdApi.disableSetting": 2,
+            "BdApi.enableSetting": 2
         },
         "react-hazards": {
             "getInternalInstance": 9,

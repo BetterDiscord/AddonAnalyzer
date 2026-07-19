@@ -1,10 +1,12 @@
 import fs from "fs/promises";
 import path from "path";
+import {lifecycleStatus} from "./ast/rules/lifecycle";
 import {isKnownField, isRequiredField} from "./ast/rules/meta";
 import {isHazardMethod} from "./ast/rules/reacthazards";
 import {cacheFolder, resultsFolder} from "./constants";
 import {DYNAMIC_SEGMENT} from "./evaluator/strings";
 import {deriveKpis, readHistory, type AddonsJson, type Kpis, type Snapshot, type SummaryJson} from "./history";
+import {declaredPaths, surface, unusedPaths} from "./surface";
 
 
 type ResultValue = Record<string, number> | number | boolean | string[];
@@ -40,6 +42,18 @@ interface ReportData {
     metaFields: Array<{field: string, addons: number, known: boolean, required: boolean}>;
     metaProblems: Array<{problem: string, field: string, addons: string[]}>;
     selfUpdaters: string[];
+
+    // Declared-but-uncalled members grouped by namespace, the phantom calls going the other
+    // way, and the manifest provenance every number in that card depends on
+    removals: Array<{namespace: string, members: Array<{name: string, deprecated: boolean}>}>;
+    declaredApis: number;
+    unusedApis: number;
+    phantoms: Array<{path: string, calls: number, plugins: string[]}>;
+
+    // Namespace-level chains whose member the AST could not resolve (`W[name]()`). These are
+    // the only way the unused list could be wrong, so it names them instead of implying none.
+    opaqueChains: string[];
+    lifecycle: Array<{member: string, plugins: number, status: "deprecated" | "candidate" | "current"}>;
     namespaces: Array<{name: string, calls: number, plugins: number}>;
     apis: Array<{api: string, calls: number, plugins: number}>;
     requires: Array<{module: string, calls: number, plugins: string[]}>;
@@ -74,6 +88,8 @@ async function assemble(): Promise<ReportData> {
     const reactPlugins = new Map<string, number>();
     const metaFieldAddons = new Map<string, number>();
     const metaProblemAddons = new Map<string, string[]>();
+    const phantomPlugins = new Map<string, string[]>();
+    const lifecyclePlugins = new Map<string, number>();
     const selfUpdaters: string[] = [];
     const fragile: ReportData["fragile"] = [];
     const flagged: Array<{name: string, signals: string[]}> = [];
@@ -119,6 +135,13 @@ async function assemble(): Promise<ReportData> {
             }
             for (const field of Object.keys(asRecord(results["meta-fields"]))) {
                 metaFieldAddons.set(field, (metaFieldAddons.get(field) ?? 0) + 1);
+            }
+            for (const phantom of Object.keys(asRecord(results["phantom-apis"]))) {
+                if (!phantomPlugins.has(phantom)) phantomPlugins.set(phantom, []);
+                phantomPlugins.get(phantom)!.push(name);
+            }
+            for (const member of Object.keys(asRecord(results.lifecycle))) {
+                lifecyclePlugins.set(member, (lifecyclePlugins.get(member) ?? 0) + 1);
             }
             for (const problem of Object.keys(asRecord(results["meta-problems"]))) {
                 if (!metaProblemAddons.has(problem)) metaProblemAddons.set(problem, []);
@@ -171,6 +194,24 @@ async function assemble(): Promise<ReportData> {
     const webpackCalls = asRecord(summary["webpack-targets"]);
     const patcherCalls = asRecord(summary["patcher-targets"]);
 
+    // Unused-ness is a property of the corpus, not of any one addon, so it is derived here from
+    // the manifest plus the summed summary rather than contorted into the per-addon Analysis
+    // shape (where `Record<member, 0>` would aggregate into nonsense).
+    const usedChains = Object.keys(apiCalls);
+    const unused = unusedPaths(usedChains);
+    const removalGroups = new Map<string, Array<{name: string, deprecated: boolean}>>();
+    for (const entry of unused) {
+        if (!removalGroups.has(entry.namespace)) removalGroups.set(entry.namespace, []);
+        removalGroups.get(entry.namespace)!.push({name: entry.member || "(whole namespace)", deprecated: entry.deprecated});
+    }
+
+    // `BdApi.Patcher.*`-shaped chains: the member is computed, so no member of that namespace
+    // can be credited and its unused rows are only as good as that blind spot.
+    const opaqueChains = usedChains.filter(chain => chain.split(".").length === 3 && chain.endsWith(".*"));
+
+    const phantomCalls = asRecord(summary["phantom-apis"]);
+    const lifecycleCounts = asRecord(summary.lifecycle);
+
     const dataDate = meta.lastUpdated.slice(0, 10);
 
     // The newest snapshot is this run's own data; "previous" is the newest older dataDate.
@@ -209,6 +250,21 @@ async function assemble(): Promise<ReportData> {
             })
             .sort((a, b) => b.addons.length - a.addons.length),
         selfUpdaters: selfUpdaters.sort(),
+        removals: [...removalGroups.entries()]
+            .map(([namespace, members]) => ({namespace, members: members.sort((a, b) => a.name.localeCompare(b.name))}))
+            .sort((a, b) => b.members.length - a.members.length || a.namespace.localeCompare(b.namespace)),
+        declaredApis: declaredPaths().length,
+        unusedApis: unused.length,
+        phantoms: Object.entries(phantomCalls)
+            .map(([p, calls]) => ({path: p, calls, plugins: (phantomPlugins.get(p) ?? []).sort()}))
+            .sort((a, b) => b.calls - a.calls),
+        opaqueChains,
+        lifecycle: Object.entries(lifecycleCounts)
+            .map(([member, count]) => ({member, plugins: count, status: lifecycleStatus(member)}))
+            .sort((a, b) => {
+                const rank = (s: string) => (s === "deprecated" ? 0 : s === "candidate" ? 1 : 2);
+                return rank(a.status) - rank(b.status) || b.plugins - a.plugins;
+            }),
         namespaces: [...namespaceStats.entries()]
             .map(([name, s]) => ({name, calls: s.calls, plugins: s.plugins.size}))
             .sort((a, b) => b.calls - a.calls),
@@ -265,6 +321,9 @@ function deltaLine(current: number, previous: number | undefined, since: string 
 // with a surface ring. Skipped for all-zero series — a flat floor line is noise, not trend.
 function spark(values: number[] | undefined): string {
     if (!values || values.length < 3 || Math.max(...values) === 0) return "";
+    // A KPI added after a snapshot was written is absent from it, which would otherwise put
+    // NaN into the polyline and silently break the curve. No series until every point is real.
+    if (values.some(v => !Number.isFinite(v))) return "";
     const w = 72;
     const h = 20;
     const pad = 4;
@@ -361,6 +420,39 @@ function metaProblemTable(rows: ReportData["metaProblems"]): string {
     </tbody></table>`;
 }
 
+// Unused members grouped by the namespace they'd be removed from, biggest group first
+function removalTable(rows: ReportData["removals"]): string {
+    if (!rows.length) return `<p class="muted">&#10003; every declared member is called by at least one addon</p>`;
+    const max = rows[0]?.members.length ?? 0;
+    const row = (r: ReportData["removals"][number]) =>
+        `<tr><td><code>BdApi.${escapeHtml(r.namespace)}</code></td>
+        <td>${r.members.map(m => `<span class="chip">${escapeHtml(m.name)}${m.deprecated ? " &middot; deprecated" : ""}</span>`).join("")}</td>
+        <td class="bar-cell">${bar(r.members.length, max)}</td><td class="num">${fmt(r.members.length)}</td></tr>`;
+    return `<table><thead><tr><th>Namespace</th><th>Members nothing calls</th><th></th><th class="num">Count</th></tr></thead><tbody>${rows.map(row).join("")}</tbody></table>`;
+}
+
+function phantomTable(rows: ReportData["phantoms"]): string {
+    if (!rows.length) return `<p class="muted">&#10003; no addon calls a BdApi member that does not exist</p>`;
+    return `<table><thead><tr><th>Called path</th><th class="num">Calls</th><th class="num">Plugins</th></tr></thead><tbody>
+    ${rows.map(r => `<tr><td><code>${escapeHtml(r.path)}</code></td><td class="num">${fmt(r.calls)}</td><td class="num muted">${fmt(r.plugins.length)}</td></tr>
+    <tr><td colspan="3"><details><summary>Which plugins</summary><ul>${r.plugins.map(p => `<li>${escapeHtml(p)}</li>`).join("")}</ul></details></td></tr>`).join("")}
+    </tbody></table>`;
+}
+
+const LIFECYCLE_CHIPS: Record<string, string> = {
+    deprecated: "deprecated",
+    candidate: "removal candidate",
+    current: "current"
+};
+
+function lifecycleTable(rows: ReportData["lifecycle"]): string {
+    if (!rows.length) return `<p class="muted">none found</p>`;
+    const max = rows.reduce((a, r) => Math.max(a, r.plugins), 0);
+    const row = (r: ReportData["lifecycle"][number]) =>
+        `<tr><td><code>${escapeHtml(r.member)}</code></td><td><span class="chip">${LIFECYCLE_CHIPS[r.status]}</span></td><td class="bar-cell">${bar(r.plugins, max)}</td><td class="num">${fmt(r.plugins)}</td></tr>`;
+    return `<table><thead><tr><th>Member</th><th>Status</th><th></th><th class="num">Plugins defining it</th></tr></thead><tbody>${rows.map(row).join("")}</tbody></table>`;
+}
+
 function render(d: ReportData): string {
     const k = d.kpis;
     const series = d.kpiSeries;
@@ -445,6 +537,7 @@ footer ul { padding-left: 18px; }
     <div class="tile"><div class="label">Authors</div><div class="value">${fmt(k.authors)}</div>${deltaLine(k.authors, p?.authors, since, false)}${spark(series?.authors)}</div>
     <div class="tile"><div class="label">Parse errors</div><div class="value">${fmt(k.parseErrors)}</div><div class="delta${k.parseErrors === 0 ? " good" : ""}">${k.parseErrors === 0 ? "&#10003; full AST coverage" : "plugins skipped"}</div>${spark(series?.parseErrors)}</div>
     <div class="tile"><div class="label">Legacy API uses</div><div class="value">${fmt(k.deprecatedUses)}</div><div class="delta${k.deprecatedUses === 0 ? " good" : ""}">${k.deprecatedUses === 0 ? "&#10003; old-old APIs are gone" : "see bdapi table"}</div>${spark(series?.deprecatedUses)}</div>
+    <div class="tile"><div class="label">Uncalled API members</div><div class="value">${fmt(k.unusedApis)}</div>${deltaLine(k.unusedApis, p?.unusedApis, since, true, `of ${fmt(d.declaredApis)} BdApi declares`)}${spark(series?.unusedApis)}</div>
     <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(k.requirePlugins)}</div>${deltaLine(k.requirePlugins, p?.requirePlugins, since, true, "plugins on the polyfill")}${spark(series?.requirePlugins)}</div>
     <div class="tile"><div class="label">Bundled / packed code</div><div class="value">${fmt(k.flagged)}</div>${deltaLine(k.flagged, p?.flagged, since, true, "plugins, by heuristic")}${spark(series?.flagged)}</div>
     <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(k.fragileAddons)}</div>${deltaLine(k.fragileAddons, p?.fragileAddons, since, true, "addons breaking on class churn")}${spark(series?.fragileAddons)}</div>
@@ -491,6 +584,25 @@ footer ul { padding-left: 18px; }
     </tbody></table>
     ${restApis.length ? `<details><summary>Show all ${fmt(restApis.length)} remaining APIs</summary><table><tbody>${restApis.map(a => apiRow(a, apiMax)).join("")}</tbody></table></details>` : ""}
     </details>
+</div>
+
+<div class="card">
+    <h2>Removal shortlist &mdash; ${fmt(d.unusedApis)} of ${fmt(d.declaredApis)} declared members go uncalled</h2>
+    <p class="note">The usage table above measures how big a change's blast radius is; this one asks whether there is any blast radius at all. BdApi's declared surface comes from a manifest generated from BetterDiscord core (<strong>v${escapeHtml(surface.source.version)}</strong>, commit <code>${escapeHtml(surface.source.commit)}</code>, read ${escapeHtml(surface.source.generated)}) by <code>scripts/surface.ts</code>, and is diffed against what the corpus actually calls. Members are the names addons type, not the classes behind them &mdash; <code>AddonAPI</code> is exposed twice, as <code>BdApi.Plugins</code> and <code>BdApi.Themes</code>, and both are counted. Names outside BD's own classes (<code>BdApi.React</code>, <code>BdApi.ReactDOM</code>) are opaque and never judged here; their members are Discord's.</p>
+    ${removalTable(d.removals)}
+    <p class="note">Uncalled in the <em>store corpus</em> only &mdash; plugins outside the store, and the private plugins every user writes, are not visible to this analysis. Read it as "no store addon would notice", not "nothing would break". Two known blind spots keep this list honest: plugins built on BDFDB or ZeresPluginLibrary route calls through the library${d.opaqueChains.length ? `, and ${d.opaqueChains.map(c => `<code>${escapeHtml(c)}</code>`).join(", ")} ${d.opaqueChains.length === 1 ? "computes its member name at runtime, so no member of that namespace can be credited from it" : "compute their member names at runtime, so no member of those namespaces can be credited from them"}` : ""}.</p>
+
+    <h2 style="margin-top:20px">Calls to members that do not exist</h2>
+    <p class="note">The other direction: chains the corpus calls that BD core does not declare. This replaces a hand-maintained list, which could only ever drift out of sync with core.</p>
+    ${phantomTable(d.phantoms)}
+    <p class="note"><strong>This is dead code, not live breakage.</strong> All of it is one library &mdash; <code>DevilBro/0BDFDB</code> &mdash; and every call sits behind a feature-detection guard (<code>typeof BdApi.enableSetting == "function"</code>, or an is-array check for <code>BdApi.settings</code>), so the code path is simply never taken. Nothing is broken today and removing these names from core would change nothing. A headline of the form "N plugins call a removed API" would be wrong.</p>
+</div>
+
+<div class="card">
+    <h2>Plugin shape &mdash; the v1 lifecycle BD still honors</h2>
+    <p class="note">What plugins define, counted at definition sites via the AST rather than by name: <code>grep -l getName</code> finds 66 plugins, but 11 of those are <code>.getName()</code> <em>calls</em> on Discord modules, which are not plugin lifecycle at all. A plugin that defines a member on a nested helper class as well as on itself is counted once.</p>
+    ${lifecycleTable(d.lifecycle)}
+    <p class="note"><strong><code>observer</code> is the one to act on.</strong> To serve the ${fmt(d.lifecycle.find(r => r.member === "observer")?.plugins ?? 0)} plugins that define it, core constructs a document-wide <code>MutationObserver</code> (<code>observe(document, {childList: true, subtree: true})</code>) and dispatches every mutation to every loaded plugin &mdash; a cost every user pays on every DOM change, whether or not they run any of those ${fmt(d.lifecycle.find(r => r.member === "observer")?.plugins ?? 0)}. <code>observer</code>, <code>onSwitch</code> and <code>load</code> are marked <em>removal candidates</em>, not deprecated: BD has not deprecated them, and this report is not the place to announce that it has. (<code>load</code> is redundant &mdash; a plugin's code already runs at require/eval time and in its constructor, so anything it does can move there &mdash; but many plugins never migrated.) The <code>get</code>-family is genuinely deprecated &mdash; the meta block supersedes it, and core only consults these overrides if the instance defines them.</p>
 </div>
 
 <div class="card">
