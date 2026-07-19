@@ -1,0 +1,317 @@
+{
+    "source": {
+        "version": "1.13.14",
+        "commit": "5f9d3b0f",
+        "generated": "2026-07-16"
+    },
+    "namespaces": {
+        "Commands": {
+            "classes": [
+                "BoundCommandAPI",
+                "CommandAPI"
+            ],
+            "opaque": false,
+            "members": [
+                "Types",
+                "Types.CommandTypes",
+                "Types.InputTypes",
+                "Types.MessageEmbedTypes",
+                "Types.OptionTypes",
+                "getCommandsByCaller",
+                "register",
+                "unregister",
+                "unregisterAll"
+            ],
+            "deprecated": []
+        },
+        "Components": {
+            "classes": [
+                "Components"
+            ],
+            "opaque": false,
+            "members": [
+                "Button",
+                "ColorInput",
+                "DropdownInput",
+                "ErrorBoundary",
+                "Flex",
+                "KeybindInput",
+                "NumberInput",
+                "RadioInput",
+                "SearchInput",
+                "SettingGroup",
+                "SettingItem",
+                "SliderInput",
+                "Spinner",
+                "SwitchInput",
+                "Text",
+                "TextInput",
+                "Tooltip"
+            ],
+            "deprecated": []
+        },
+        "ContextMenu": {
+            "classes": [
+                "ContextMenu"
+            ],
+            "opaque": false,
+            "members": [
+                "CheckboxItem",
+                "ControlItem",
+                "Group",
+                "Item",
+                "Menu",
+                "RadioItem",
+                "Separator",
+                "buildItem",
+                "buildMenu",
+                "buildMenuChildren",
+                "close",
+                "open",
+                "patch",
+                "unpatch"
+            ],
+            "deprecated": []
+        },
+        "Data": {
+            "classes": [
+                "BoundData",
+                "Data"
+            ],
+            "opaque": false,
+            "members": [
+                "delete",
+                "load",
+                "recache",
+                "save"
+            ],
+            "deprecated": []
+        },
+        "DOM": {
+            "classes": [
+                "BoundDOM",
+                "DOM"
+            ],
+            "opaque": false,
+            "members": [
+                "addStyle",
+                "animate",
+                "createElement",
+                "onAdded",
+                "onRemoved",
+                "parseHTML",
+                "removeStyle",
+                "screenHeight",
+                "screenWidth"
+            ],
+            "deprecated": []
+        },
+        "Hooks": {
+            "classes": [
+                "BoundHooks",
+                "Hooks"
+            ],
+            "opaque": false,
+            "members": [
+                "useData",
+                "useForceUpdate",
+                "useStateFromStores"
+            ],
+            "deprecated": []
+        },
+        "Logger": {
+            "classes": [
+                "BoundLogger",
+                "Logger"
+            ],
+            "opaque": false,
+            "members": [
+                "debug",
+                "error",
+                "info",
+                "log",
+                "stacktrace",
+                "warn"
+            ],
+            "deprecated": []
+        },
+        "Net": {
+            "classes": [
+                "Net"
+            ],
+            "opaque": false,
+            "members": [
+                "fetch"
+            ],
+            "deprecated": []
+        },
+        "Patcher": {
+            "classes": [
+                "BoundPatcher",
+                "Patcher"
+            ],
+            "opaque": false,
+            "members": [
+                "after",
+                "before",
+                "getPatchesByCaller",
+                "instead",
+                "unpatchAll"
+            ],
+            "deprecated": []
+        },
+        "Plugins": {
+            "classes": [
+                "AddonAPI"
+            ],
+            "opaque": false,
+            "members": [
+                "disable",
+                "enable",
+                "folder",
+                "get",
+                "getAll",
+                "isEnabled",
+                "reload",
+                "toggle"
+            ],
+            "deprecated": []
+        },
+        "React": {
+            "classes": [],
+            "opaque": true,
+            "members": [],
+            "deprecated": []
+        },
+        "ReactDOM": {
+            "classes": [],
+            "opaque": true,
+            "members": [],
+            "deprecated": []
+        },
+        "ReactUtils": {
+            "classes": [
+                "ReactUtils"
+            ],
+            "opaque": false,
+            "members": [
+                "createNodePatcher",
+                "getInternalInstance",
+                "getOwnerInstance",
+                "getType",
+                "rootInstance",
+                "wrapElement",
+                "wrapInHooks"
+            ],
+            "deprecated": [
+                "rootInstance"
+            ]
+        },
+        "Themes": {
+            "classes": [
+                "AddonAPI"
+            ],
+            "opaque": false,
+            "members": [
+                "disable",
+                "enable",
+                "folder",
+                "get",
+                "getAll",
+                "isEnabled",
+                "reload",
+                "toggle"
+            ],
+            "deprecated": []
+        },
+        "UI": {
+            "classes": [
+                "UI"
+            ],
+            "opaque": false,
+            "members": [
+                "alert",
+                "buildSettingItem",
+                "buildSettingsPanel",
+                "createTooltip",
+                "openDialog",
+                "showChangelogModal",
+                "showConfirmationModal",
+                "showInviteModal",
+                "showNotice",
+                "showNotification",
+                "showToast"
+            ],
+            "deprecated": []
+        },
+        "Utils": {
+            "classes": [
+                "Utils"
+            ],
+            "opaque": false,
+            "members": [
+                "Store",
+                "cache",
+                "className",
+                "debounce",
+                "escapeHTML",
+                "extend",
+                "findInTree",
+                "forceLoad",
+                "getNestedValue",
+                "mapObject",
+                "semverCompare"
+            ],
+            "deprecated": []
+        },
+        "version": {
+            "classes": [],
+            "opaque": true,
+            "members": [],
+            "deprecated": []
+        },
+        "Webpack": {
+            "classes": [
+                "Webpack"
+            ],
+            "opaque": false,
+            "members": [
+                "Filters",
+                "Filters.byComponentType",
+                "Filters.byDisplayName",
+                "Filters.byKeys",
+                "Filters.byPrototypeKeys",
+                "Filters.byRegex",
+                "Filters.bySource",
+                "Filters.byStoreName",
+                "Filters.byStrings",
+                "Filters.combine",
+                "Filters.not",
+                "Stores",
+                "getAllByKeys",
+                "getAllByPrototypeKeys",
+                "getAllByRegex",
+                "getAllBySource",
+                "getAllByStrings",
+                "getBulk",
+                "getBulkKeyed",
+                "getById",
+                "getByKeys",
+                "getByPrototypeKeys",
+                "getByRegex",
+                "getBySource",
+                "getByStrings",
+                "getMangled",
+                "getMangledProxy",
+                "getModule",
+                "getModules",
+                "getProxy",
+                "getStore",
+                "getWithKey",
+                "modules",
+                "waitForModule"
+            ],
+            "deprecated": []
+        }
+    }
+}
