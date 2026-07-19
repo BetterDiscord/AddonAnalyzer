@@ -1,5 +1,6 @@
 import {analyzeAddon, rules, type Finding} from "../ast";
 import {DYNAMIC_SEGMENT} from "../evaluator/strings";
+import {phantomPath} from "../surface";
 import {Type, type Analysis, type CachedAddon} from "../types";
 
 
@@ -41,6 +42,45 @@ export const deprecatedApis: Analysis = {
             counts[api] = (counts[api] ?? 0) + 1;
         }
         return counts;
+    }
+};
+
+/**
+ * Calls to BdApi members BD core does not declare, keyed by the phantom path.
+ *
+ * Classified here rather than in a rule because the judgement needs no AST: the bdapi-usage
+ * rule has already resolved every chain through aliases and instances, so this reads its
+ * findings and diffs them against the manifest — the same reuse `self-updating` makes of
+ * the url rules. The counterpart question ("declared but never called") is a corpus-wide
+ * fact that the per-addon Analysis shape cannot express at all; the report derives it from
+ * the manifest plus summary.json instead.
+ */
+export const phantomApis: Analysis = {
+    key: "phantom-apis",
+    types: [Type.Plugin],
+    run(addon) {
+        const counts: Record<string, number> = {};
+        for (const finding of getFindings(addon)) {
+            if (finding.rule !== "bdapi-usage") continue;
+            const phantom = phantomPath(String(finding.details?.api));
+            if (phantom) counts[phantom] = (counts[phantom] ?? 0) + 1;
+        }
+        return counts;
+    }
+};
+
+// Presence per addon, so the summary reads "plugins defining this member" (the meta-fields
+// precedent) rather than counting a member twice in a plugin that defines it on two classes
+export const lifecycle: Analysis = {
+    key: "lifecycle",
+    types: [Type.Plugin],
+    run(addon) {
+        const present: Record<string, number> = {};
+        for (const finding of getFindings(addon)) {
+            if (finding.rule !== "lifecycle") continue;
+            present[String(finding.details?.member)] = 1;
+        }
+        return present;
     }
 };
 

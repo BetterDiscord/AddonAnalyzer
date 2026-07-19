@@ -1,13 +1,14 @@
 import type {ESTree} from "meriyah";
+import {deprecatedPaths} from "../../surface";
 import {Type} from "../../types";
 import {memberChain, resolveChain, stripGlobal} from "../helpers";
 import {type Finding, type Rule, type RuleContext} from "../types";
 
 
-// Namespaced APIs deprecated with replacements available
-const DEPRECATED_CURRENT = [
-    "BdApi.ReactUtils.rootInstance",
-];
+// Currently-deprecated APIs, read from the generated surface manifest rather than listed
+// here: `@deprecated` in BD core is the fact, and a copy of it drifts the moment core
+// deprecates something else. Regenerate with `bun run scripts/surface.ts <bd-path>`.
+const DEPRECATED_CURRENT = deprecatedPaths();
 
 // Deprecated options of otherwise-fine calls: api -> which argument and which property
 const DEPRECATED_OPTIONS: Record<string, {index: number, option: string}> = {

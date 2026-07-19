@@ -1,2 +1,2 @@
 export {default as imports} from "./imports";
-export {bdapiUsage, deprecatedApis, remoteUrls, cssUrls, networkUrls, htmlInjection, dynamicCode, parseErrors, requires, obfuscationSignals, obfuscatedPlugins, webpackTargets, patcherTargets, globals, reactHazards, classLiterals, metaFields, metaProblems, selfUpdating, selfUpdateSignalCounts} from "./ast";
+export {bdapiUsage, deprecatedApis, phantomApis, lifecycle, remoteUrls, cssUrls, networkUrls, htmlInjection, dynamicCode, parseErrors, requires, obfuscationSignals, obfuscatedPlugins, webpackTargets, patcherTargets, globals, reactHazards, classLiterals, metaFields, metaProblems, selfUpdating, selfUpdateSignalCounts} from "./ast";
