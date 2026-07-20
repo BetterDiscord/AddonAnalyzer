@@ -1,6 +1,6 @@
 {
     "dataDate": "2026-07-14",
-    "generated": "2026-07-20T04:35:20.001Z",
+    "generated": "2026-07-20T07:10:36.084Z",
     "methodology": 2,
     "kpis": {
         "plugins": 208,
@@ -13843,6 +13843,15 @@
             "innerHTML": 79,
             "outerHTML": 4
         },
+        "library-dep-signals": {
+            "BDFDB:read": 47,
+            "BDFDB:guard": 47,
+            "ZeresPluginLibrary:read": 1
+        },
+        "library-deps": {
+            "BDFDB": 47,
+            "ZeresPluginLibrary": 1
+        },
         "lifecycle": {
             "stop": 189,
             "start": 192,
@@ -13963,6 +13972,9 @@
             "BdApi.isSettingEnabled": 2,
             "BdApi.disableSetting": 2,
             "BdApi.enableSetting": 2
+        },
+        "raw-dom": {
+            "raw-style-element": 4
         },
         "react-hazards": {
             "getInternalInstance": 9,

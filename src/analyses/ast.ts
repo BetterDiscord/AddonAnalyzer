@@ -162,6 +162,48 @@ export const patcherTargets: Analysis = {
     run: (addon) => countBy(addon, "patcher-targets", f => String(f.details?.method))
 };
 
+// Plugins that reach Discord through a library object (BDFDB, ZeresPluginLibrary) instead of
+// calling BdApi directly — presence per library, so the summary reads "N plugins route through
+// X". This sizes the indirection blind spot every other internals analysis undercounts: those
+// N plugins' webpack/patcher/bdapi usage is attributed to the library, not to them. See the
+// library-deps rule for why detection is a global read, not a string mention.
+export const libraryDeps: Analysis = {
+    key: "library-deps",
+    types: [Type.Plugin],
+    run(addon) {
+        const present: Record<string, number> = {};
+        for (const finding of getFindings(addon)) {
+            if (finding.rule !== "library-deps") continue;
+            present[String(finding.details?.library)] = 1;
+        }
+        return present;
+    }
+};
+
+// The same dependents split by signal ("<library>:<signal>"), so the report can distinguish a
+// plugin that only guards for the library (a bootstrap check) from one that actively calls it.
+export const libraryDepSignals: Analysis = {
+    key: "library-dep-signals",
+    types: [Type.Plugin],
+    run(addon) {
+        const present: Record<string, number> = {};
+        for (const finding of getFindings(addon)) {
+            if (finding.rule !== "library-deps") continue;
+            present[`${String(finding.details?.library)}:${String(finding.details?.signal)}`] = 1;
+        }
+        return present;
+    }
+};
+
+// Hand-rolled DOM work BdApi already offers, keyed by shape. Currently just raw <style> injection
+// (document.createElement("style")); its API counterpart BdApi.DOM.addStyle is counted by
+// bdapi-usage, so the report pairs the two from there rather than double-counting it here.
+export const rawDom: Analysis = {
+    key: "raw-dom",
+    types: [Type.Plugin],
+    run: (addon) => countBy(addon, "raw-dom", f => String(f.details?.shape))
+};
+
 // Node/Electron environment reach, keyed by root plus one segment (process.env, Buffer.from)
 export const globals: Analysis = {
     key: "globals",

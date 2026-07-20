@@ -78,6 +78,16 @@ interface ReportData {
     };
     webpackTargets: Array<{kind: string, value: string, calls: number, plugins: number}>;
     patcherTargets: Array<{method: string, calls: number, plugins: number}>;
+
+    // Plugins routing Discord access through a library (BDFDB, ZeresPluginLibrary) instead of
+    // BdApi — the size of the blind spot the internals numbers above undercount. `reads` is how
+    // many of them actively call the library rather than only guarding for it.
+    libraryDeps: Array<{library: string, plugins: number, reads: number}>;
+    libraryDepTotal: number;
+
+    // Style injection: the API (BdApi.DOM.addStyle) vs the hand-rolled <style> element. A rare
+    // case where the API is winning, so the card presents it as the good news it is.
+    rawStyle: {rawAddons: number, apiAddons: number};
     hosts: Record<"network-urls" | "css-urls" | "remote-urls", Array<{host: string, refs: number, addons: number}>>;
     sinks: Array<{name: string, count: number, plugins: number}>;
     dynamicCode: Array<{name: string, count: number, plugins: number}>;
@@ -101,6 +111,10 @@ async function assemble(): Promise<ReportData> {
     const patcherPlugins = new Map<string, number>();
     const globalPlugins = new Map<string, number>();
     const reactPlugins = new Map<string, number>();
+    const libraryDepAddons = new Map<string, number>(); // library -> dependent addons
+    const libraryReadAddons = new Map<string, number>(); // library -> addons that actively call it
+    const libraryDepPlugins = new Set<string>(); // distinct plugins depending on any library
+    let rawStyleAddons = 0; // plugins hand-rolling a <style> element
     const metaFieldAddons = new Map<string, number>();
     const metaProblemAddons = new Map<string, string[]>();
     const phantomPlugins = new Map<string, string[]>();
@@ -158,6 +172,15 @@ async function assemble(): Promise<ReportData> {
             for (const method of Object.keys(asRecord(results["react-hazards"]))) {
                 reactPlugins.set(method, (reactPlugins.get(method) ?? 0) + 1);
             }
+            const libs = Object.keys(asRecord(results["library-deps"]));
+            if (libs.length) libraryDepPlugins.add(name);
+            for (const lib of libs) libraryDepAddons.set(lib, (libraryDepAddons.get(lib) ?? 0) + 1);
+            for (const sig of Object.keys(asRecord(results["library-dep-signals"]))) {
+                if (!sig.endsWith(":read")) continue;
+                const lib = sig.slice(0, -":read".length);
+                libraryReadAddons.set(lib, (libraryReadAddons.get(lib) ?? 0) + 1);
+            }
+            if (Object.keys(asRecord(results["raw-dom"])).includes("raw-style-element")) rawStyleAddons++;
             for (const field of Object.keys(asRecord(results["meta-fields"]))) {
                 metaFieldAddons.set(field, (metaFieldAddons.get(field) ?? 0) + 1);
             }
@@ -340,6 +363,11 @@ async function assemble(): Promise<ReportData> {
         patcherTargets: Object.entries(patcherCalls)
             .map(([method, calls]) => ({method, calls, plugins: patcherPlugins.get(method) ?? 0}))
             .sort((a, b) => b.plugins - a.plugins || b.calls - a.calls),
+        libraryDeps: [...libraryDepAddons.entries()]
+            .map(([library, plugins]) => ({library, plugins, reads: libraryReadAddons.get(library) ?? 0}))
+            .sort((a, b) => b.plugins - a.plugins),
+        libraryDepTotal: libraryDepPlugins.size,
+        rawStyle: {rawAddons: rawStyleAddons, apiAddons: apiPlugins.get("BdApi.DOM.addStyle") ?? 0},
         hosts,
         sinks: Object.entries(injection).map(([name, count]) => ({name, count, plugins: sinkPlugins.get(name) ?? 0})).sort((a, b) => b.count - a.count),
         dynamicCode: Object.entries(dynamic).map(([name, count]) => ({name, count, plugins: dynamicPlugins.get(name) ?? 0})).sort((a, b) => b.count - a.count),
@@ -643,6 +671,12 @@ footer ul { padding-left: 18px; }
             ${targetTable(d.reactHazards.map(r => ({label: r.method, chip: r.hazard ? "hazard" : "modern", calls: r.calls, plugins: r.plugins})), "Method", 15)}
         </div>
     </div>
+    <h2 style="margin-top:20px">Style injection &mdash; API vs hand-rolled <span class="chip">API winning</span></h2>
+    <p class="note">The same question <code>createRoot</code> answers for React, for stylesheets: are plugins using the API BD offers, or doing it by hand? <code>BdApi.DOM.addStyle</code> injects a managed <code>&lt;style&gt;</code> that BD removes on unload; a hand-rolled <code>document.createElement("style")</code> is the plugin's own to clean up. Here the API is ahead &mdash; the healthy direction. (React's virtual <code>createElement("style")</code> is not counted; only a real DOM node is.)</p>
+    <table><thead><tr><th>Approach</th><th></th><th class="num">Plugins</th></tr></thead><tbody>
+    <tr><td><code>BdApi.DOM.addStyle</code> <span class="chip">API</span></td><td class="bar-cell">${bar(d.rawStyle.apiAddons, Math.max(d.rawStyle.apiAddons, d.rawStyle.rawAddons))}</td><td class="num">${fmt(d.rawStyle.apiAddons)}</td></tr>
+    <tr><td><code>document.createElement("style")</code> <span class="chip">hand-rolled</span></td><td class="bar-cell">${bar(d.rawStyle.rawAddons, Math.max(d.rawStyle.apiAddons, d.rawStyle.rawAddons))}</td><td class="num">${fmt(d.rawStyle.rawAddons)}</td></tr>
+    </tbody></table>
 </div>
 
 <div class="card">
@@ -680,7 +714,8 @@ footer ul { padding-left: 18px; }
 
 <div class="card">
     <h2>Discord internals reliance</h2>
-    <p class="note">What the ecosystem pulls out of Discord's webpack (module keys, exported strings, prototype keys, stores, display names) and which methods it patches. This is the surface that breaks on Discord updates &mdash; the highest-demand entries are candidates for a stable <code>CommonModules</code> offering. Undercounts plugins built on BDFDB or ZeresPluginLibrary, which route these lookups through the library rather than <code>BdApi</code> directly.</p>
+    <p class="note">What the ecosystem pulls out of Discord's webpack (module keys, exported strings, prototype keys, stores, display names) and which methods it patches. This is the surface that breaks on Discord updates &mdash; the highest-demand entries are candidates for a stable <code>CommonModules</code> offering.</p>
+    <p class="note"><strong>These are floors, not totals.</strong> <strong>${fmt(d.libraryDepTotal)}</strong> of ${fmt(k.plugins)} plugins reach Discord through a library object rather than <code>BdApi</code> directly (${d.libraryDeps.map(l => `${escapeHtml(l.library)} ${fmt(l.plugins)}`).join(", ")}) &mdash; their webpack lookups and patches are attributed to the library, so they are invisible to the tables below. Detection is a runtime read of the library global, not a string mention: the four ex-dependents whose changelogs still say "no longer relies on ZeresPluginLibrary" are correctly excluded. Both libraries are unmaintained &mdash; ZeresPluginLibrary was deprecated over a year ago &mdash; so every dependent is also a plugin that will need rewriting when the library finally breaks.</p>
     <div class="cols">
         <div><h2>Webpack lookup targets</h2>${targetTable(d.webpackTargets.map(t => ({label: t.value, chip: t.kind, calls: t.calls, plugins: t.plugins})), "Target")}</div>
         <div><h2>Patched methods</h2>${targetTable(d.patcherTargets.map(t => ({label: t.method, calls: t.calls, plugins: t.plugins})), "Method")}</div>
