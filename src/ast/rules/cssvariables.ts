@@ -1,15 +1,17 @@
-import {isDiscordVariable} from "../../discordvars";
+import {isDiscordVariable, isOutdatedVariable} from "../../discordvars";
 import {type Finding, type Rule, type RuleContext} from "../types";
 
 
-// CSS custom properties, three distinct signals (see handoff-05):
+// CSS custom properties, distinct signals (see handoff-05):
 //   - consumption: `var(--x)` in a value — the adoption/health signal, the counterpart to
 //     class-literals fragility. A theme built on Discord's variables survives class churn.
 //   - definition: `--x:` declared anywhere — themes define their own palettes; normal, not health.
-//   - overlap: a definition whose name Discord also ships — how themes retheme Discord, but also
-//     how a theme silently breaks when Discord renames or repurposes a variable.
-// Kept as separate finding kinds (not one `${kind}:${name}` key) because the report wants three
-// separate top-N tables and they rank differently.
+//   - overlap: a definition whose name Discord *currently* ships — how themes retheme Discord.
+//   - outdated: a definition or consumption of a name Discord has since renamed/removed
+//     (--text-normal -> --text-default). The CSS analog of a stale hardcoded class: it resolves to
+//     nothing now, so the theme silently breaks. Classified against the manifest's `deprecated` set.
+// overlap and outdated are disjoint (a name is either in Discord's current set or its former set).
+// Kept as separate finding kinds because the report wants separate top-N tables that rank differently.
 
 // Comments and quoted strings are blanked (length- and newline-preserving, so loc stays correct)
 // before scanning, so `/* --x: */` and `content: "var(--x)"` are must-not-matches.
@@ -49,13 +51,14 @@ export const cssVariablesRule: Rule = {
         for (const match of css.matchAll(DEFINITION)) {
             const name = match[1];
             const overlap = isDiscordVariable(name);
+            const outdated = isOutdatedVariable(name);
             findings.push({
                 rule: "css-variables",
                 file: context.file,
-                message: `Defines CSS variable ${name}${overlap ? " (shadows a Discord variable)" : ""}`,
+                message: `Defines CSS variable ${name}${overlap ? " (shadows a Discord variable)" : outdated ? " (Discord has removed this variable)" : ""}`,
                 category: "style",
                 severity: "info",
-                details: {kind: "definition", name, overlap},
+                details: {kind: "definition", name, overlap, outdated},
                 loc: {line: lineAt(css, match.index ?? 0, defState), column: 0}
             });
         }
@@ -69,7 +72,7 @@ export const cssVariablesRule: Rule = {
                 message: `Consumes CSS variable ${name}`,
                 category: "style",
                 severity: "info",
-                details: {kind: "consumption", name},
+                details: {kind: "consumption", name, outdated: isOutdatedVariable(name)},
                 loc: {line: lineAt(css, match.index ?? 0, useState), column: 0}
             });
         }

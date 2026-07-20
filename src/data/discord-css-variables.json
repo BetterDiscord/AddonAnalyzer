@@ -1,7 +1,7 @@
 {
     "source": {
         "generated": "2026-07-19",
-        "note": "Discord web client CSS custom properties (current set), maintainer-provided (Zerebos). Discord renames drop the old name (e.g. --text-normal became --text-default); former names, once catalogued, belong in \"deprecated\" to drive an outdated-usage signal."
+        "note": "Discord web client CSS custom properties. variables[] = current set (maintainer-provided, Zerebos). deprecated[] = former names Discord has renamed/removed (e.g. --text-normal -> --text-default), drafted from the classic semantic layer and confirmed against the corpus; drives the outdated-usage signal. Sets are disjoint."
     },
     "variables": [
         "--brightness",
@@ -4955,9 +4955,45 @@
         "--background-secondary",
         "--background-tertiary",
         "--background-floating",
+        "--background-nested-floating",
+        "--background-mobile-primary",
+        "--background-mobile-secondary",
         "--background-modifier-hover",
-        "--header-primary",
+        "--background-modifier-active",
+        "--background-modifier-selected",
+        "--background-modifier-accent",
+        "--background-message-hover",
+        "--background-message-highlight",
+        "--background-message-automod",
         "--text-normal",
-        "--interactive-normal"
+        "--text-link-low-saturation",
+        "--text-positive",
+        "--text-warning",
+        "--text-danger",
+        "--header-primary",
+        "--header-secondary",
+        "--interactive-normal",
+        "--interactive-hover",
+        "--interactive-active",
+        "--brand-experiment",
+        "--brand-experiment-100",
+        "--brand-experiment-200",
+        "--brand-experiment-300",
+        "--brand-experiment-400",
+        "--brand-experiment-500",
+        "--brand-experiment-600",
+        "--brand-experiment-700",
+        "--brand-experiment-800",
+        "--brand-experiment-900",
+        "--deprecated-card-bg",
+        "--deprecated-card-editable-bg",
+        "--deprecated-store-bg",
+        "--deprecated-quickswitcher-input-background",
+        "--deprecated-text-input-bg",
+        "--deprecated-text-input-border",
+        "--info-positive-foreground",
+        "--info-warning-foreground",
+        "--info-danger-foreground",
+        "--info-help-foreground"
     ]
 }

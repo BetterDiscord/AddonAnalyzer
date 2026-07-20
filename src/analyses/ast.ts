@@ -303,3 +303,13 @@ export const cssVarOverlap: Analysis = {
     types: [Type.Plugin, Type.Theme],
     run: (addon) => countVars(addon, f => f.details?.kind === "definition" && f.details.overlap === true)
 };
+
+// A definition or consumption of a name Discord has since renamed/removed — the CSS analog of a
+// stale hardcoded class. Both directions count: consuming var(--text-normal) now resolves to nothing,
+// and defining --background-primary reskins a variable Discord no longer reads. Classified against the
+// manifest's `deprecated` set, never inferred, so it stays empty until that set is populated.
+export const cssVarOutdated: Analysis = {
+    key: "css-var-outdated",
+    types: [Type.Plugin, Type.Theme],
+    run: (addon) => countVars(addon, f => f.details?.outdated === true)
+};

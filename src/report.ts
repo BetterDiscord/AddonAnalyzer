@@ -70,9 +70,11 @@ interface ReportData {
         consumeDiscordAddons: number; // addons consuming >= 1 live Discord variable (health)
         defineAddons: number; // addons defining any custom property
         overlapAddons: number; // addons defining >= 1 live Discord variable name (reskin/overlap)
+        outdatedAddons: number; // addons defining/consuming >= 1 removed Discord variable name
         definitionNames: number; // distinct property names defined across the corpus
         topConsumed: Array<{name: string, addons: number}>; // live Discord vars, by addon count
         topOverlap: Array<{name: string, addons: number}>; // reskinned Discord vars, by addon count
+        topOutdated: Array<{name: string, addons: number}>; // removed Discord vars still in use, by addon count
     };
     webpackTargets: Array<{kind: string, value: string, calls: number, plugins: number}>;
     patcherTargets: Array<{method: string, calls: number, plugins: number}>;
@@ -110,10 +112,12 @@ async function assemble(): Promise<ReportData> {
     // CSS-variable presence, counted per addon (a name defined 40× in one theme is one addon here)
     const consumedDiscord = new Map<string, number>(); // live Discord var -> addons consuming it
     const overlapDefs = new Map<string, number>(); // live Discord var -> addons defining (reskinning) it
+    const outdatedUse = new Map<string, number>(); // removed Discord var -> addons still touching it
     const definitionNames = new Set<string>();
     let consumeDiscordAddons = 0;
     let defineAddons = 0;
     let overlapAddons = 0;
+    let outdatedAddons = 0;
 
     for (const author of Object.keys(addons)) {
         for (const [file, results] of Object.entries(addons[author])) {
@@ -181,12 +185,15 @@ async function assemble(): Promise<ReportData> {
             const usage = Object.keys(asRecord(results["css-var-usage"]));
             const defs = Object.keys(asRecord(results["css-var-definitions"]));
             const overlaps = Object.keys(asRecord(results["css-var-overlap"]));
+            const outdated = Object.keys(asRecord(results["css-var-outdated"]));
             const discordConsumed = usage.filter(isDiscordVariable);
             if (discordConsumed.length) consumeDiscordAddons++;
             if (defs.length) defineAddons++;
             if (overlaps.length) overlapAddons++;
+            if (outdated.length) outdatedAddons++;
             for (const nm of discordConsumed) consumedDiscord.set(nm, (consumedDiscord.get(nm) ?? 0) + 1);
             for (const nm of overlaps) overlapDefs.set(nm, (overlapDefs.get(nm) ?? 0) + 1);
+            for (const nm of outdated) outdatedUse.set(nm, (outdatedUse.get(nm) ?? 0) + 1);
             for (const nm of defs) definitionNames.add(nm);
         }
     }
@@ -318,9 +325,11 @@ async function assemble(): Promise<ReportData> {
             consumeDiscordAddons,
             defineAddons,
             overlapAddons,
+            outdatedAddons,
             definitionNames: definitionNames.size,
             topConsumed: [...consumedDiscord.entries()].map(([name, count]) => ({name, addons: count})).sort((a, b) => b.addons - a.addons),
             topOverlap: [...overlapDefs.entries()].map(([name, count]) => ({name, addons: count})).sort((a, b) => b.addons - a.addons),
+            topOutdated: [...outdatedUse.entries()].map(([name, count]) => ({name, addons: count})).sort((a, b) => b.addons - a.addons),
         },
         webpackTargets: Object.entries(webpackCalls)
             .map(([key, calls]) => {
@@ -698,7 +707,10 @@ footer ul { padding-left: 18px; }
             ${cssVarTable(d.cssVars.topOverlap)}
         </div>
     </div>
-    <p class="note">Overlap is against Discord's <em>current</em> variables, so it measures live reskins. A theme still using a variable Discord has since renamed (<code>--text-normal</code> &rarr; <code>--text-default</code>) &mdash; the CSS-variable analog of a stale hardcoded class &mdash; is a separate <em>outdated-usage</em> signal, planned once the manifest catalogues Discord's former names (its <code>deprecated</code> list); it is not inferred here.</p>
+    <p class="note">Overlap is against Discord's <em>current</em> variables, so it measures live reskins. Using a variable Discord has since <em>renamed or removed</em> (<code>--text-normal</code> &rarr; <code>--text-default</code>) is the separate fragility signal below.</p>
+    <h2 style="margin-top:20px">Outdated variables <span class="chip">breaks silently</span></h2>
+    <p class="note">The CSS-variable analog of a stale hardcoded class. <strong>${fmt(d.cssVars.outdatedAddons)}</strong> addons still define or read a name from Discord's former semantic layer (<code>--background-primary</code>, <code>--text-normal</code>, <code>--interactive-normal</code>, the <code>--brand-experiment-*</code> scale&hellip;) &mdash; each now resolves to nothing, so the styling is dead. Matched against the manifest's <code>deprecated</code> list of Discord's removed names, never inferred from the corpus.</p>
+    ${cssVarTable(d.cssVars.topOutdated)}
 </div>
 
 <div class="card">
