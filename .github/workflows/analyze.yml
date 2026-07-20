@@ -42,8 +42,9 @@ jobs:
           path: .cache
           key: addon-corpus-${{ steps.week.outputs.week }}
 
-      # On a cache miss this downloads the full corpus; either way the imports
-      # analysis resolves theme @imports live, so every run needs network. A
+      # On a cache miss this downloads the full corpus AND fetches every theme's remote
+      # @import graph into .cache/imports (both covered by the cache above). On a cache
+      # hit the run is offline: updateImports() is gated on the corpus dataDate. A
       # store-API hiccup fails the run; rerun via workflow_dispatch or wait a week.
       - run: bun run analyze
 

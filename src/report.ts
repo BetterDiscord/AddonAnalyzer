@@ -4,8 +4,9 @@ import {lifecycleStatus} from "./ast/rules/lifecycle";
 import {isKnownField, isRequiredField} from "./ast/rules/meta";
 import {isHazardMethod} from "./ast/rules/reacthazards";
 import {cacheFolder, resultsFolder} from "./constants";
+import {discordVarCount, discordVarSource, isDiscordVariable} from "./discordvars";
 import {DYNAMIC_SEGMENT} from "./evaluator/strings";
-import {deriveKpis, readHistory, type AddonsJson, type Kpis, type Snapshot, type SummaryJson} from "./history";
+import {deriveKpis, METHODOLOGY, readHistory, type AddonsJson, type Kpis, type Snapshot, type SummaryJson} from "./history";
 import {declaredPaths, surface, unusedPaths} from "./surface";
 
 
@@ -61,6 +62,18 @@ interface ReportData {
     reactHazards: Array<{method: string, calls: number, plugins: number, hazard: boolean}>;
     fragile: Array<{name: string, tokens: number, type: "plugin" | "theme"}>;
     fragileAddons: number;
+
+    // CSS custom properties: the healthy counterpart to hardcoded classes. Consuming Discord's
+    // variables survives class churn; defining (reskinning) Discord's own names is how themes
+    // retheme but also how they break on a Discord rename. Counted over theme + embedded-CSS content.
+    cssVars: {
+        consumeDiscordAddons: number; // addons consuming >= 1 live Discord variable (health)
+        defineAddons: number; // addons defining any custom property
+        overlapAddons: number; // addons defining >= 1 live Discord variable name (reskin/overlap)
+        definitionNames: number; // distinct property names defined across the corpus
+        topConsumed: Array<{name: string, addons: number}>; // live Discord vars, by addon count
+        topOverlap: Array<{name: string, addons: number}>; // reskinned Discord vars, by addon count
+    };
     webpackTargets: Array<{kind: string, value: string, calls: number, plugins: number}>;
     patcherTargets: Array<{method: string, calls: number, plugins: number}>;
     hosts: Record<"network-urls" | "css-urls" | "remote-urls", Array<{host: string, refs: number, addons: number}>>;
@@ -93,6 +106,14 @@ async function assemble(): Promise<ReportData> {
     const selfUpdaters: string[] = [];
     const fragile: ReportData["fragile"] = [];
     const flagged: Array<{name: string, signals: string[]}> = [];
+
+    // CSS-variable presence, counted per addon (a name defined 40× in one theme is one addon here)
+    const consumedDiscord = new Map<string, number>(); // live Discord var -> addons consuming it
+    const overlapDefs = new Map<string, number>(); // live Discord var -> addons defining (reskinning) it
+    const definitionNames = new Set<string>();
+    let consumeDiscordAddons = 0;
+    let defineAddons = 0;
+    let overlapAddons = 0;
 
     for (const author of Object.keys(addons)) {
         for (const [file, results] of Object.entries(addons[author])) {
@@ -156,6 +177,17 @@ async function assemble(): Promise<ReportData> {
             if (results["obfuscated-plugins"] === true) {
                 flagged.push({name, signals: Object.keys(asRecord(results["obfuscation-signals"]))});
             }
+
+            const usage = Object.keys(asRecord(results["css-var-usage"]));
+            const defs = Object.keys(asRecord(results["css-var-definitions"]));
+            const overlaps = Object.keys(asRecord(results["css-var-overlap"]));
+            const discordConsumed = usage.filter(isDiscordVariable);
+            if (discordConsumed.length) consumeDiscordAddons++;
+            if (defs.length) defineAddons++;
+            if (overlaps.length) overlapAddons++;
+            for (const nm of discordConsumed) consumedDiscord.set(nm, (consumedDiscord.get(nm) ?? 0) + 1);
+            for (const nm of overlaps) overlapDefs.set(nm, (overlapDefs.get(nm) ?? 0) + 1);
+            for (const nm of defs) definitionNames.add(nm);
         }
     }
 
@@ -282,6 +314,14 @@ async function assemble(): Promise<ReportData> {
             .sort((a, b) => Number(b.hazard) - Number(a.hazard) || b.plugins - a.plugins),
         fragile: fragile.sort((a, b) => b.tokens - a.tokens),
         fragileAddons: fragile.length,
+        cssVars: {
+            consumeDiscordAddons,
+            defineAddons,
+            overlapAddons,
+            definitionNames: definitionNames.size,
+            topConsumed: [...consumedDiscord.entries()].map(([name, count]) => ({name, addons: count})).sort((a, b) => b.addons - a.addons),
+            topOverlap: [...overlapDefs.entries()].map(([name, count]) => ({name, addons: count})).sort((a, b) => b.addons - a.addons),
+        },
         webpackTargets: Object.entries(webpackCalls)
             .map(([key, calls]) => {
                 const split = key.indexOf(":");
@@ -387,6 +427,20 @@ function fragileTable(rows: ReportData["fragile"], visible = 15): string {
     return head + rows.slice(0, visible).map(row).join("") + tail;
 }
 
+// CSS-variable names ranked by how many addons touch them, most-shared first
+function cssVarTable(rows: Array<{name: string, addons: number}>, visible = 15): string {
+    if (!rows.length) return `<p class="muted">none found</p>`;
+    const max = rows[0]?.addons ?? 0;
+    const row = (r: {name: string, addons: number}) =>
+        `<tr><td><code>${escapeHtml(r.name)}</code></td><td class="bar-cell">${bar(r.addons, max)}</td><td class="num">${fmt(r.addons)}</td></tr>`;
+    const head = `<table><thead><tr><th>Variable</th><th></th><th class="num">Addons</th></tr></thead><tbody>`;
+    const rest = rows.slice(visible);
+    const tail = rest.length
+        ? `</tbody></table><details><summary>Show ${rest.length} more</summary><table><tbody>${rest.map(row).join("")}</tbody></table></details>`
+        : "</tbody></table>";
+    return head + rows.slice(0, visible).map(row).join("") + tail;
+}
+
 // Field coverage: how much of the corpus ships each meta field, required ones first
 function metaFieldTable(rows: ReportData["metaFields"], corpus: number): string {
     const order = (r: ReportData["metaFields"][number]) => (r.required ? 0 : r.known ? 1 : 2);
@@ -458,6 +512,14 @@ function render(d: ReportData): string {
     const series = d.kpiSeries;
     const p = d.previous?.kpis;
     const since = d.previous?.dataDate;
+
+    // The previous snapshot predates the remote-CSS methodology, so its class-literals-based
+    // fragileAddons is not comparable — suppress that one tile's delta and sparkline (a fake jump
+    // read as a regression otherwise) while every other KPI compares normally. See METHODOLOGY.
+    const methodologyBreak = d.previous ? (d.previous.methodology ?? 1) !== METHODOLOGY : false;
+    const fragilePrev = methodologyBreak ? undefined : p?.fragileAddons;
+    const fragileSeries = methodologyBreak ? undefined : series?.fragileAddons;
+
     const prevRequires = asRecord(d.previous?.summary.requires);
     const nsMax = d.namespaces[0]?.calls ?? 0;
     const prevApis = asRecord(d.previous?.summary["bdapi-usage"]);
@@ -540,7 +602,7 @@ footer ul { padding-left: 18px; }
     <div class="tile"><div class="label">Uncalled API members</div><div class="value">${fmt(k.unusedApis)}</div>${deltaLine(k.unusedApis, p?.unusedApis, since, true, `of ${fmt(d.declaredApis)} BdApi declares`)}${spark(series?.unusedApis)}</div>
     <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(k.requirePlugins)}</div>${deltaLine(k.requirePlugins, p?.requirePlugins, since, true, "plugins on the polyfill")}${spark(series?.requirePlugins)}</div>
     <div class="tile"><div class="label">Bundled / packed code</div><div class="value">${fmt(k.flagged)}</div>${deltaLine(k.flagged, p?.flagged, since, true, "plugins, by heuristic")}${spark(series?.flagged)}</div>
-    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(k.fragileAddons)}</div>${deltaLine(k.fragileAddons, p?.fragileAddons, since, true, "addons breaking on class churn")}${spark(series?.fragileAddons)}</div>
+    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(k.fragileAddons)}</div>${deltaLine(k.fragileAddons, fragilePrev, since, true, methodologyBreak ? "remote CSS now measured" : "addons breaking on class churn")}${spark(fragileSeries)}</div>
     <div class="tile"><div class="label">Malformed meta</div><div class="value">${fmt(k.metaProblemAddons)}</div>${deltaLine(k.metaProblemAddons, p?.metaProblemAddons, since, true, "addons with meta problems")}${spark(series?.metaProblemAddons)}</div>
     <div class="tile"><div class="label">Self-installing</div><div class="value">${fmt(k.selfUpdating)}</div>${deltaLine(k.selfUpdating, p?.selfUpdating, since, true, "plugins writing plugin files")}${spark(series?.selfUpdating)}</div>
 </div>
@@ -617,7 +679,26 @@ footer ul { padding-left: 18px; }
 <div class="card">
     <h2>Hardcoded Discord class names</h2>
     <p class="note">Discord ships hashed CSS classes in two styles &mdash; <code>wrapper_a1b2c3</code> and <code>name__2ea32</code> &mdash; and rehashes them on class churn. Every token counted here is a selector that silently stops matching when that happens; the fix is a class-module lookup such as <code>BdApi.Webpack.getByKeys(&hellip;)</code>. Counts are occurrences, not distinct classes: a vendored class-name map inflates a single addon fast.</p>
+    <p class="note"><strong>Remote CSS is now counted.</strong> Most themes are a thin <code>@import</code> wrapper whose real CSS lives on a host like <code>*.github.io</code>; that content is fetched, cached, and analysed here, attributed to the importing theme &mdash; so shared remote CSS imported by N themes counts under each of the N. This lands a one-time jump in these totals versus older snapshots: a measurement change, not the ecosystem regressing, which is why the tile's delta is neutralised for this data date.</p>
     ${fragileTable(d.fragile)}
+</div>
+
+<div class="card">
+    <h2>CSS custom properties &mdash; the resilient counterpart</h2>
+    <p class="note">The healthy inverse of hardcoded classes. A theme built on Discord's CSS variables (<code>var(--background-base-low)</code>) rides out class churn; one built on <code>.wrapper_a1b2c3</code> does not. <strong>${fmt(d.cssVars.consumeDiscordAddons)}</strong> addons consume at least one of Discord's ${fmt(discordVarCount)} live variables; <strong>${fmt(d.cssVars.overlapAddons)}</strong> define (reskin) one of those names, and ${fmt(d.cssVars.defineAddons)} define custom properties at all (${fmt(d.cssVars.definitionNames)} distinct names &mdash; overwhelmingly their own palettes). Consumption and definition are measured from the corpus; the overlap column is diffed against a checked-in manifest of Discord's current variables${discordVarSource?.generated ? ` (captured ${escapeHtml(discordVarSource.generated)})` : ""}.</p>
+    <div class="cols">
+        <div>
+            <h2>Consuming Discord variables <span class="chip">resilient</span></h2>
+            <p class="note">Live Discord custom properties read via <code>var()</code>, by addon. These survive class-name rehashing.</p>
+            ${cssVarTable(d.cssVars.topConsumed)}
+        </div>
+        <div>
+            <h2>Reskinning Discord variables <span class="chip">overlap</span></h2>
+            <p class="note">Addons that <em>define</em> a name Discord also ships &mdash; the mechanism themes use to retheme Discord, and the thing that breaks silently when Discord renames or drops the variable.</p>
+            ${cssVarTable(d.cssVars.topOverlap)}
+        </div>
+    </div>
+    <p class="note">Overlap is against Discord's <em>current</em> variables, so it measures live reskins. A theme still using a variable Discord has since renamed (<code>--text-normal</code> &rarr; <code>--text-default</code>) &mdash; the CSS-variable analog of a stale hardcoded class &mdash; is a separate <em>outdated-usage</em> signal, planned once the manifest catalogues Discord's former names (its <code>deprecated</code> list); it is not inferred here.</p>
 </div>
 
 <div class="card">

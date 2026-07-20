@@ -8,6 +8,16 @@ import type {Results} from "./types";
 export type AddonsJson = Record<string, Record<string, Record<string, Results>>>;
 export type SummaryJson = Record<string, Results>;
 
+// Bumped whenever a measurement change (not an ecosystem change) discontinuously shifts a KPI, so
+// the report can neutralise the resulting delta instead of colouring it as a regression. History 2
+// (2026-07): theme @import content is now analysed as first-class CSS, which jumps class-literals /
+// css-urls hard for import-only themes. Snapshots predating this field are methodology 1.
+export const METHODOLOGY = 2;
+
+// KPIs whose value is not comparable across a methodology boundary. Only fragileAddons (class-literals
+// based) moves with the remote-CSS change; corpus/plugin counts and plugin-only KPIs are unaffected.
+export const METHODOLOGY_SENSITIVE: ReadonlyArray<keyof Kpis> = ["fragileAddons"];
+
 // The report's headline numbers. Snapshots store them alongside summary.json because the
 // interesting ones are per-addon counts ("how many plugins use require") that summary.json
 // cannot express — it sums call counts, so 3 requires in 1 plugin and 1 each in 3 plugins are
@@ -36,6 +46,11 @@ export interface Snapshot {
     // the same cache must overwrite its snapshot rather than fabricate a second data point.
     dataDate: string;
     generated: string;
+
+    // Measurement-methodology version this snapshot was produced under (see METHODOLOGY). Absent on
+    // snapshots written before the field existed; readers treat missing as 1.
+    methodology?: number;
+
     kpis: Kpis;
     summary: SummaryJson;
 }
@@ -87,6 +102,7 @@ export async function writeSnapshot(): Promise<Snapshot> {
     const snapshot: Snapshot = {
         dataDate: meta.lastUpdated.slice(0, 10),
         generated: new Date().toISOString(),
+        methodology: METHODOLOGY,
         kpis: deriveKpis(addons, summary),
         summary
     };
@@ -98,7 +114,8 @@ export async function writeSnapshot(): Promise<Snapshot> {
     // when the data is identical, keep the existing snapshot and its original `generated`.
     try {
         const existing = JSON.parse(await fs.readFile(file, "utf8")) as Snapshot;
-        if (JSON.stringify([existing.kpis, existing.summary]) === JSON.stringify([snapshot.kpis, snapshot.summary])) {
+        if ((existing.methodology ?? 1) === snapshot.methodology
+            && JSON.stringify([existing.kpis, existing.summary]) === JSON.stringify([snapshot.kpis, snapshot.summary])) {
             return existing;
         }
     }
