@@ -1,7 +1,9 @@
 import {type Finding, type Rule} from "../types";
 
 
-const IMPORT_PATTERN = /@import\s+(?:url\(\s*)?["']?([^"'()\s;]+)["']?\s*\)?/g;
+// Exported so the import-graph resolver in importcache.ts extracts @imports the same way the
+// rule counts them — one regex, not two subtly-different copies (the retired imports.ts had its own)
+export const IMPORT_PATTERN = /@import\s+(?:url\(\s*)?["']?([^"'()\s;]+)["']?\s*\)?/g;
 const URL_PATTERN = /url\(\s*["']?([^"')]+)["']?\s*\)/gi;
 
 // Themes are injected into discord.com, so protocol- and root-relative refs resolve there

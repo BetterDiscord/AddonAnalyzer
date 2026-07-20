@@ -270,3 +270,36 @@ export const obfuscatedPlugins: Analysis = {
     types: [Type.Plugin],
     run: (addon) => getFindings(addon).some(f => f.rule === "obfuscation" && f.details?.flagged === true)
 };
+
+// CSS custom properties, three keys because the report wants three tables that rank differently
+// (see the css-variables rule). Counts are occurrences; per-addon presence is derived in report.ts.
+function countVars(addon: CachedAddon, keep: (f: Finding) => boolean): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const finding of getFindings(addon)) {
+        if (finding.rule !== "css-variables" || !keep(finding)) continue;
+        const name = String(finding.details?.name);
+        counts[name] = (counts[name] ?? 0) + 1;
+    }
+    return counts;
+}
+
+export const cssVarUsage: Analysis = {
+    key: "css-var-usage",
+    types: [Type.Plugin, Type.Theme],
+    run: (addon) => countVars(addon, f => f.details?.kind === "consumption")
+};
+
+export const cssVarDefinitions: Analysis = {
+    key: "css-var-definitions",
+    types: [Type.Plugin, Type.Theme],
+    run: (addon) => countVars(addon, f => f.details?.kind === "definition")
+};
+
+// A definition whose name Discord also ships: the theme reskins Discord's variable, and breaks
+// silently if Discord renames or repurposes it. Overlap membership is set in the rule against the
+// checked-in Discord manifest, so this analysis is pure classification of the definition findings.
+export const cssVarOverlap: Analysis = {
+    key: "css-var-overlap",
+    types: [Type.Plugin, Type.Theme],
+    run: (addon) => countVars(addon, f => f.details?.kind === "definition" && f.details.overlap === true)
+};
