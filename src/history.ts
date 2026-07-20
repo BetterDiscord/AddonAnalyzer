@@ -39,6 +39,12 @@ export interface Kpis {
     // removes API as well as when the corpus adopts it — both are the point. Snapshots written
     // before this KPI existed simply lack it; the report falls back rather than inventing a delta.
     unusedApis: number;
+
+    // Total store-file size of the corpus in bytes (handoff-07): the denominator that lets a
+    // future snapshot tell corpus growth apart from behaviour change. Neutral context, never
+    // coloured. Store files only (summed summary.size.bytes), so it excludes remote @import CSS.
+    // Absent on snapshots predating this KPI; the report degrades rather than inventing a delta.
+    corpusBytes: number;
 }
 
 export interface Snapshot {
@@ -71,7 +77,8 @@ export function deriveKpis(addons: AddonsJson, summary: SummaryJson): Kpis {
         fragileAddons: 0,
         metaProblemAddons: 0,
         selfUpdating: 0,
-        unusedApis: unusedPaths(Object.keys(asRecord(summary["bdapi-usage"]))).length
+        unusedApis: unusedPaths(Object.keys(asRecord(summary["bdapi-usage"]))).length,
+        corpusBytes: Number(asRecord(summary.size).bytes ?? 0)
     };
 
     for (const author of Object.keys(addons)) {

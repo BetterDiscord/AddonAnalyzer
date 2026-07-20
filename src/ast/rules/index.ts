@@ -16,9 +16,10 @@ import {reactHazardsRule} from "./reacthazards";
 import {remoteUrlRule} from "./remoteurls";
 import {requireRule} from "./requires";
 import {selfUpdateRule} from "./selfupdate";
+import {sizeRule} from "./size";
 import {patcherTargetsRule, webpackTargetsRule} from "./webpacktargets";
 
-export {bdApiRule, classLiteralsRule, cssUrlRule, cssVariablesRule, evalRule, globalsRule, innerHTMLRule, libraryDepsRule, lifecycleRule, metaRule, networkUrlRule, obfuscationRule, rawDomRule, reactHazardsRule, remoteUrlRule, requireRule, selfUpdateRule, webpackTargetsRule, patcherTargetsRule};
+export {bdApiRule, classLiteralsRule, cssUrlRule, cssVariablesRule, evalRule, globalsRule, innerHTMLRule, libraryDepsRule, lifecycleRule, metaRule, networkUrlRule, obfuscationRule, rawDomRule, reactHazardsRule, remoteUrlRule, requireRule, selfUpdateRule, sizeRule, webpackTargetsRule, patcherTargetsRule};
 
 export const rules: Rule[] = [
     bdApiRule,
@@ -38,6 +39,7 @@ export const rules: Rule[] = [
     remoteUrlRule,
     requireRule,
     selfUpdateRule,
+    sizeRule,
     webpackTargetsRule,
     patcherTargetsRule,
 ];

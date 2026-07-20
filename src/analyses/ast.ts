@@ -141,6 +141,27 @@ export const parseErrors: Analysis = {
     run: (addon) => getFindings(addon).filter(f => f.rule === "parse-error").length
 };
 
+// Per-addon size — the denominator every other number lacks (handoff-07). The `size` rule
+// measures the store file only (bytes/lines/codeLines reconcile against wc); `remoteBytes` is
+// added here because a theme's real CSS lives in its remote @import content, which the rule
+// deliberately does not see. Aggregation sums each key, so summary.size gives total corpus size
+// for free. Ratios (classes-per-KB) are NOT computed here — summing a ratio is meaningless; the
+// report derives them per-addon in assemble(). `remoteBytes` is per-addon fuel for that (its
+// summary sum is not meaningful — shared remote CSS is counted once per importing theme).
+export const size: Analysis = {
+    key: "size",
+    types: [Type.Plugin, Type.Theme],
+    run(addon) {
+        const finding = getFindings(addon).find(f => f.rule === "size");
+        return {
+            bytes: Number(finding?.details?.bytes ?? 0),
+            lines: Number(finding?.details?.lines ?? 0),
+            codeLines: Number(finding?.details?.codeLines ?? 0),
+            remoteBytes: addon.remote_content ? Buffer.byteLength(addon.remote_content, "utf8") : 0
+        };
+    }
+};
+
 export const requires: Analysis = {
     key: "requires",
     types: [Type.Plugin],

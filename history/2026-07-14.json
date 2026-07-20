@@ -1,6 +1,6 @@
 {
     "dataDate": "2026-07-14",
-    "generated": "2026-07-20T07:10:36.084Z",
+    "generated": "2026-07-20T08:05:59.200Z",
     "methodology": 2,
     "kpis": {
         "plugins": 208,
@@ -13,7 +13,8 @@
         "fragileAddons": 102,
         "metaProblemAddons": 10,
         "selfUpdating": 48,
-        "unusedApis": 27
+        "unusedApis": 27,
+        "corpusBytes": 17282897
     },
     "summary": {
         "class-literals": 456469,
@@ -13515,6 +13516,12 @@
             "missing:author": 1,
             "missing:description": 1,
             "missing:version": 1
+        },
+        "size": {
+            "bytes": 17282897,
+            "lines": 395157,
+            "codeLines": 356694,
+            "remoteBytes": 45088292
         },
         "bdapi-usage": {
             "BdApi.Logger.warn": 37,
