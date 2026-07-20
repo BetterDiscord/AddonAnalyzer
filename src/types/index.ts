@@ -43,6 +43,11 @@ export interface CachedAddon {
     author: string;
     type: Type;
     file_content: string;
+
+    // For themes: the concatenated remote CSS this theme pulls in via @import (from the import
+    // cache). Undefined for plugins and for themes with no imports. Fed through the CSS content
+    // rules and attributed to this theme — see getFindings in analyses/ast.ts.
+    remote_content?: string;
 }
 
 export type AddonFilename = `${string}.plugin.js` | `${string}.theme.css`;

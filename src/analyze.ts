@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import {addonFolder, resultsFolder} from "./constants";
+import {loadImportGraph, loadRemoteCss, themeKey} from "./importcache";
 import {type Results, type CachedAddon, Type, type AddonFilename, type Analysis} from "./types";
 import * as Analyses from "./analyses";
 
@@ -9,6 +10,7 @@ type OverallResults = Record<CachedAddon["author"], Record<AddonFilename, Record
 
 export async function analyze() {
     const results: OverallResults = {};
+    const importGraph = await loadImportGraph();
 
     const filesAndFolders = await fs.readdir(addonFolder);
     for (let f = 0; f < filesAndFolders.length; f++) {
@@ -24,11 +26,13 @@ export async function analyze() {
 
             const file = path.join(authorPath, filename);
             const contents = (await fs.readFile(file)).toString();
+            const type = filename.endsWith(".plugin.js") ? Type.Plugin : Type.Theme;
             const addon: CachedAddon = {
                 file_content: contents,
                 file_name: filename,
                 author: author,
-                type: filename.endsWith(".plugin.js") ? Type.Plugin : Type.Theme
+                type,
+                remote_content: type === Type.Theme ? await loadRemoteCss(themeKey(author, filename), importGraph) : undefined
             };
             for (const name in Analyses) {
                 const analysis: Analysis = Analyses[name as keyof typeof Analyses];

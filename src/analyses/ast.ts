@@ -1,8 +1,14 @@
-import {analyzeAddon, rules, type Finding} from "../ast";
+import {analyzeAddon, classLiteralsRule, cssUrlRule, cssVariablesRule, rules, type Finding} from "../ast";
 import {DYNAMIC_SEGMENT} from "../evaluator/strings";
 import {phantomPath} from "../surface";
 import {Type, type Analysis, type CachedAddon} from "../types";
 
+
+// The CSS-content rules re-run over a theme's remote @import content (see below). Deliberately not
+// the whole rule set: meta must not run on remote CSS (it has no meta block, so every import would
+// report no-meta-block). css-url/class-literals/css-variables are the rules whose subject is the CSS
+// itself, so they extend naturally to the remote content the store file only loads.
+const REMOTE_CONTENT_RULES = [cssUrlRule, classLiteralsRule, cssVariablesRule];
 
 // One parse+walk per addon shared by every AST-backed analysis below
 const findingsCache = new WeakMap<CachedAddon, Finding[]>();
@@ -10,6 +16,12 @@ function getFindings(addon: CachedAddon): Finding[] {
     let findings = findingsCache.get(addon);
     if (!findings) {
         findings = analyzeAddon(addon.file_name, addon.file_content, addon.type, rules);
+        // A theme's real CSS usually lives on *.github.io behind an @import; the store file is a
+        // loader. Analyze that fetched content too and attribute its findings to the importing
+        // theme (this addon), so class-literals/css-urls measure the theme, not the wrapper.
+        if (addon.remote_content) {
+            findings.push(...analyzeAddon(addon.file_name, addon.remote_content, Type.Theme, REMOTE_CONTENT_RULES));
+        }
         findingsCache.set(addon, findings);
     }
     return findings;
