@@ -422,13 +422,15 @@ function targetTable(rows: Array<{label: string, chip?: string, calls: number, p
     return head + shown + tail || `<p class="muted">none found</p>`;
 }
 
-// Addons ranked by hardcoded-class count, worst first
-function fragileTable(rows: ReportData["fragile"], visible = 15): string {
+// Addons ranked by hardcoded-class count, worst first. Split by type into its own column, so the
+// per-column bar scale is independent (themes dwarf plugins) and the type chip is dropped as
+// redundant — the column header carries it.
+function fragileTable(rows: ReportData["fragile"], firstCol = "Addon", visible = 15): string {
     if (!rows.length) return `<p class="muted">none found</p>`;
     const max = rows[0]?.tokens ?? 0;
     const row = (r: ReportData["fragile"][number]) =>
-        `<tr><td>${escapeHtml(r.name)} <span class="chip">${r.type}</span></td><td class="bar-cell">${bar(r.tokens, max)}</td><td class="num">${fmt(r.tokens)}</td></tr>`;
-    const head = `<table><thead><tr><th>Addon</th><th></th><th class="num">Hardcoded classes</th></tr></thead><tbody>`;
+        `<tr><td>${escapeHtml(r.name)}</td><td class="bar-cell">${bar(r.tokens, max)}</td><td class="num">${fmt(r.tokens)}</td></tr>`;
+    const head = `<table><thead><tr><th>${escapeHtml(firstCol)}</th><th></th><th class="num">Hardcoded classes</th></tr></thead><tbody>`;
     const rest = rows.slice(visible);
     const tail = rest.length
         ? `</tbody></table><details><summary>Show ${rest.length} more</summary><table><tbody>${rest.map(row).join("")}</tbody></table></details>`
@@ -689,7 +691,10 @@ footer ul { padding-left: 18px; }
     <h2>Hardcoded Discord class names</h2>
     <p class="note">Discord ships hashed CSS classes in two styles &mdash; <code>wrapper_a1b2c3</code> and <code>name__2ea32</code> &mdash; and rehashes them on class churn. Every token counted here is a selector that silently stops matching when that happens; the fix is a class-module lookup such as <code>BdApi.Webpack.getByKeys(&hellip;)</code>. Counts are occurrences, not distinct classes: a vendored class-name map inflates a single addon fast.</p>
     <p class="note"><strong>Remote CSS is now counted.</strong> Most themes are a thin <code>@import</code> wrapper whose real CSS lives on a host like <code>*.github.io</code>; that content is fetched, cached, and analysed here, attributed to the importing theme &mdash; so shared remote CSS imported by N themes counts under each of the N. This lands a one-time jump in these totals versus older snapshots: a measurement change, not the ecosystem regressing, which is why the tile's delta is neutralised for this data date.</p>
-    ${fragileTable(d.fragile)}
+    <div class="cols">
+        <div><h2>Themes</h2>${fragileTable(d.fragile.filter(f => f.type === "theme"), "Theme")}</div>
+        <div><h2>Plugins</h2>${fragileTable(d.fragile.filter(f => f.type === "plugin"), "Plugin")}</div>
+    </div>
 </div>
 
 <div class="card">
