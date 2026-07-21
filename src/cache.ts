@@ -24,22 +24,24 @@ async function exists(location: string) {
     }
 }
 
-const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
-function dateDiffInDays(a: Date, b: Date) {
-
-    // Discard the time and time-zone information.
-    const utc1 = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
-    const utc2 = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
-
-    return Math.floor((utc2 - utc1) / MILLISECONDS_PER_DAY);
+// Monday (UTC) of the ISO week containing `date`, as YYYY-MM-DD — the corpus cadence key.
+// CI pins .cache per ISO week (`date -u +%G-%V`, weeks start Monday, same as the cron);
+// staleness here and snapshot naming in history.ts key on the same boundary, so every run
+// within one week — local or CI, whatever weekday — analyzes one corpus under one dataDate.
+// A rolling seven-day window is NOT equivalent: a cache from last Monday is 7 days old on
+// Tuesday, so a mid-week local refresh stamped an off-cadence date and history/ grew a
+// second snapshot for the week.
+export function weekStart(date: Date): string {
+    const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    day.setUTCDate(day.getUTCDate() - ((day.getUTCDay() + 6) % 7));
+    return day.toISOString().slice(0, 10);
 }
 
 export async function isInvalid() {
     if (!(await exists(cacheFolder))) return true;
     try {
         const metadata: Metadata = JSON.parse((await fs.readFile(cacheMetaJson)).toString()) as Metadata;
-        const lastUpdated = new Date(metadata.lastUpdated);
-        if (dateDiffInDays(lastUpdated, new Date()) >= 7) return true;
+        if (weekStart(new Date(metadata.lastUpdated)) !== weekStart(new Date())) return true;
         const cached: APIAddon[] = JSON.parse((await fs.readFile(addonCacheJson)).toString()) as APIAddon[];
         if (cached.length != metadata.count) return true;
         return false;

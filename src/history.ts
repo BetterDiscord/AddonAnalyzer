@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import {weekStart} from "./cache";
 import {cacheFolder, historyFolder, resultsFolder} from "./constants";
 import {unusedPaths} from "./surface";
 import type {Results} from "./types";
@@ -48,8 +49,11 @@ export interface Kpis {
 }
 
 export interface Snapshot {
-    // Date of the addon data itself (cache lastUpdated), NOT the run date — re-running against
-    // the same cache must overwrite its snapshot rather than fabricate a second data point.
+    // Week of the addon data itself: the ISO-week Monday of the cache's lastUpdated, NOT the
+    // run date — the series cadence is weekly, so any re-run within the same data week must
+    // overwrite that week's snapshot rather than fabricate a second data point. The raw
+    // download date is not preserved (an off-Monday date here only ever meant a mid-week
+    // cache refresh, not different data worth a point of its own).
     dataDate: string;
     generated: string;
 
@@ -107,7 +111,7 @@ export async function writeSnapshot(): Promise<Snapshot> {
     const meta = await readJson<{lastUpdated: string}>(path.join(cacheFolder, "meta.json"));
 
     const snapshot: Snapshot = {
-        dataDate: meta.lastUpdated.slice(0, 10),
+        dataDate: weekStart(new Date(meta.lastUpdated)),
         generated: new Date().toISOString(),
         methodology: METHODOLOGY,
         kpis: deriveKpis(addons, summary),
