@@ -6,7 +6,7 @@ Analyzes all official BetterDiscord addons (plugins + themes from the store) to 
 
 - **API usage counts** — how much is each `BdApi` member used, so the impact of changes, deprecations, and removals in BetterDiscord core can be measured before pruning legacy code.
 - **Remote URL inventory** — which hosts addons actually reach, to eventually form a tight CSP.
-- **Security signals** — `innerHTML`/`outerHTML` assignment, `insertAdjacentHTML`, `eval`, `Function` constructor.
+- **Security signals** — `innerHTML`/`outerHTML` assignment, `insertAdjacentHTML`, React `dangerouslySetInnerHTML` props, `eval`, `Function` constructor.
 
 The output is aggregate data for maintainer decision-making, not a linter for addon authors.
 
