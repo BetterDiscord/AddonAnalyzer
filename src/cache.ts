@@ -37,6 +37,13 @@ export function weekStart(date: Date): string {
     return day.toISOString().slice(0, 10);
 }
 
+// The on-disk author directory name: display_name stripped of filesystem-hostile characters.
+// Also the join-key prefix storemeta.ts uses to attach store metadata to analyzed files —
+// results/addons.json is keyed by these directory names, so the two must never drift.
+export function authorDirName(displayName: string): string {
+    return displayName.replace(/[/\\?%*:|"<>]/g, "");
+}
+
 export async function isInvalid() {
     if (!(await exists(cacheFolder))) return true;
     try {
@@ -74,7 +81,7 @@ export async function update() {
         const addon = addons[a];
         if (addon.author.display_name !== author) {
             author = addon.author.display_name;
-            authorPath = path.join(addonFolder, author.replace(/[/\\?%*:|"<>]/g, ""));
+            authorPath = path.join(addonFolder, authorDirName(author));
             if (!(await exists(authorPath))) await fs.mkdir(authorPath);
 
             console.log("");
@@ -91,7 +98,7 @@ async function downloadAddon(addon: APIAddon, location: string) {
     const sourceUrl = addon.latest_source_url;
     if (!sourceUrl) return;
 
-    const authorPath = path.join(addonFolder, addon.author.display_name.replace(/[/\\?%*:|"<>]/g, ""));
+    const authorPath = path.join(addonFolder, authorDirName(addon.author.display_name));
     if (!(await exists(authorPath))) await fs.mkdir(authorPath);
 
     const downloadUrl = sourceUrl.replace("github.com", "raw.githubusercontent.com").replace("blob/", "");

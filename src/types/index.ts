@@ -6,13 +6,15 @@ export interface APIAddon {
     description: string;
     version: string;
     author: Author;
-    likes: number;
+    // The API sends likes as a string ("307") while downloads is a number; storemeta.ts
+    // coerces at that boundary so no use site carries the quirk.
+    likes: string;
     downloads: number;
     tags: string[];
     thumbnail_url: null | string;
     latest_source_url: string;
-    initial_release_date: Date;
-    latest_release_date: Date;
+    initial_release_date: string;
+    latest_release_date: string;
     guild: Guild | null;
 }
 
