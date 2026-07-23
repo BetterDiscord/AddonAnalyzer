@@ -7,6 +7,7 @@ import {cacheFolder, resultsFolder} from "./constants";
 import {discordVarCount, discordVarSource, isDiscordVariable} from "./discordvars";
 import {DYNAMIC_SEGMENT} from "./evaluator/strings";
 import {deriveKpis, METHODOLOGY, readHistory, type AddonsJson, type Kpis, type Snapshot, type SummaryJson} from "./history";
+import {loadStoreMeta, storeMetaKey} from "./storemeta";
 import {declaredPaths, surface, unusedPaths} from "./surface";
 
 
@@ -27,6 +28,19 @@ function humanBytes(n: number): string {
     if (n < 1024) return `${fmt(n)} B`;
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
     return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Download counts span 3 to 8 digits, so tables humanize them the same way bytes are
+function humanCount(n: number): string {
+    if (n < 1000) return fmt(n);
+    if (n < 1e6) return `${(n / 1e3).toFixed(1)}K`;
+    return `${(n / 1e6).toFixed(1)}M`;
+}
+
+// Weighted-column cell: null means the store metadata was unavailable for this run, which
+// must read as "unknown", never as a zero-download claim
+function dlCell(v: number | null): string {
+    return v === null ? `<td class="num muted">&mdash;</td>` : `<td class="num muted">${humanCount(v)}</td>`;
 }
 
 function asRecord(value: ResultValue | undefined): Record<string, number> {
@@ -61,10 +75,15 @@ interface ReportData {
     // Namespace-level chains whose member the AST could not resolve (`W[name]()`). These are
     // the only way the unused list could be wrong, so it names them instead of implying none.
     opaqueChains: string[];
-    lifecycle: Array<{member: string, plugins: number, status: "deprecated" | "candidate" | "current"}>;
+
+    // Weighted columns (handoff-08 B2): `downloads` is the combined cumulative lifetime store
+    // downloads of the plugins behind each row — installed base, never active users. Raw addon
+    // counts stay primary and remain the sort key everywhere; the weighted reading sits beside
+    // them. null (not 0) when the store metadata was unavailable for the whole run.
+    lifecycle: Array<{member: string, plugins: number, status: "deprecated" | "candidate" | "current", downloads: number | null}>;
     namespaces: Array<{name: string, calls: number, plugins: number}>;
     apis: Array<{api: string, calls: number, plugins: number}>;
-    requires: Array<{module: string, calls: number, plugins: string[]}>;
+    requires: Array<{module: string, calls: number, plugins: string[], downloads: number | null}>;
     globals: Array<{name: string, calls: number, plugins: number}>;
     reactHazards: Array<{method: string, calls: number, plugins: number, hazard: boolean}>;
     // tokens = raw occurrences (total blast radius, the ranking key); perKb = occurrences per KB of
@@ -93,8 +112,13 @@ interface ReportData {
     // Plugins routing Discord access through a library (BDFDB, ZeresPluginLibrary) instead of
     // BdApi — the size of the blind spot the internals numbers above undercount. `reads` is how
     // many of them actively call the library rather than only guarding for it.
-    libraryDeps: Array<{library: string, plugins: number, reads: number}>;
+    libraryDeps: Array<{library: string, plugins: number, reads: number, downloads: number | null}>;
     libraryDepTotal: number;
+    libraryDepDownloads: number | null;
+
+    // Combined cumulative downloads across the analyzed corpus — the denominator that turns
+    // any weighted column into a share of the installed base
+    corpusDownloads: number | null;
 
     // Style injection: the API (BdApi.DOM.addStyle) vs the hand-rolled <style> element. A rare
     // case where the API is winning, so the card presents it as the good news it is.
@@ -110,6 +134,11 @@ async function assemble(): Promise<ReportData> {
     const summary = JSON.parse(await fs.readFile(path.join(resultsFolder, "summary.json"), "utf8")) as SummaryJson;
     const addons = JSON.parse(await fs.readFile(path.join(resultsFolder, "addons.json"), "utf8")) as AddonsJson;
     const meta = JSON.parse(await fs.readFile(path.join(cacheFolder, "meta.json"), "utf8")) as {lastUpdated: string};
+
+    // Store metadata for the weighted readings; an empty map (unreadable cache file) makes
+    // every weighted value null so the tables show "—" rather than claiming zero downloads
+    const storeMeta = await loadStoreMeta();
+    const hasStoreMeta = storeMeta.size > 0;
 
     let plugins = 0;
     let themes = 0;
@@ -130,6 +159,11 @@ async function assemble(): Promise<ReportData> {
     const metaProblemAddons = new Map<string, string[]>();
     const phantomPlugins = new Map<string, string[]>();
     const lifecyclePlugins = new Map<string, number>();
+    const lifecycleDownloads = new Map<string, number>(); // member -> downloads of defining plugins
+    const requireDownloads = new Map<string, number>(); // module -> downloads of requiring plugins
+    const libraryDownloads = new Map<string, number>(); // library -> downloads of its dependents
+    let libraryDepDownloads = 0; // downloads of distinct plugins depending on any library
+    let corpusDownloads = 0;
     const selfUpdaters: string[] = [];
     const fragile: ReportData["fragile"] = [];
     const flagged: Array<{name: string, signals: string[]}> = [];
@@ -150,12 +184,19 @@ async function assemble(): Promise<ReportData> {
             if (file.endsWith(".plugin.js")) plugins++;
             else themes++;
 
+            // Cumulative lifetime downloads of this addon — the installed-base weight behind
+            // every per-addon count below. 0 for the (currently unseen) case of a disk file
+            // the store response doesn't cover; it then counts raw but weighs nothing.
+            const downloads = storeMeta.get(storeMetaKey(author, file))?.downloads ?? 0;
+            corpusDownloads += downloads;
+
             for (const api of Object.keys(asRecord(results["bdapi-usage"]))) {
                 apiPlugins.set(api, (apiPlugins.get(api) ?? 0) + 1);
             }
             for (const module of Object.keys(asRecord(results.requires))) {
                 if (!requirePlugins.has(module)) requirePlugins.set(module, []);
                 requirePlugins.get(module)!.push(name);
+                requireDownloads.set(module, (requireDownloads.get(module) ?? 0) + downloads);
             }
             for (const key of Object.keys(hostStats)) {
                 for (const [host, refs] of Object.entries(asRecord(results[key]))) {
@@ -184,8 +225,14 @@ async function assemble(): Promise<ReportData> {
                 reactPlugins.set(method, (reactPlugins.get(method) ?? 0) + 1);
             }
             const libs = Object.keys(asRecord(results["library-deps"]));
-            if (libs.length) libraryDepPlugins.add(name);
-            for (const lib of libs) libraryDepAddons.set(lib, (libraryDepAddons.get(lib) ?? 0) + 1);
+            if (libs.length) {
+                libraryDepPlugins.add(name);
+                libraryDepDownloads += downloads;
+            }
+            for (const lib of libs) {
+                libraryDepAddons.set(lib, (libraryDepAddons.get(lib) ?? 0) + 1);
+                libraryDownloads.set(lib, (libraryDownloads.get(lib) ?? 0) + downloads);
+            }
             for (const sig of Object.keys(asRecord(results["library-dep-signals"]))) {
                 if (!sig.endsWith(":read")) continue;
                 const lib = sig.slice(0, -":read".length);
@@ -201,6 +248,7 @@ async function assemble(): Promise<ReportData> {
             }
             for (const member of Object.keys(asRecord(results.lifecycle))) {
                 lifecyclePlugins.set(member, (lifecyclePlugins.get(member) ?? 0) + 1);
+                lifecycleDownloads.set(member, (lifecycleDownloads.get(member) ?? 0) + downloads);
             }
             for (const problem of Object.keys(asRecord(results["meta-problems"]))) {
                 if (!metaProblemAddons.has(problem)) metaProblemAddons.set(problem, []);
@@ -339,7 +387,7 @@ async function assemble(): Promise<ReportData> {
             .sort((a, b) => b.calls - a.calls),
         opaqueChains,
         lifecycle: Object.entries(lifecycleCounts)
-            .map(([member, count]) => ({member, plugins: count, status: lifecycleStatus(member)}))
+            .map(([member, count]) => ({member, plugins: count, status: lifecycleStatus(member), downloads: hasStoreMeta ? lifecycleDownloads.get(member) ?? 0 : null}))
             .sort((a, b) => {
                 const rank = (s: string) => (s === "deprecated" ? 0 : s === "candidate" ? 1 : 2);
                 return rank(a.status) - rank(b.status) || b.plugins - a.plugins;
@@ -351,7 +399,7 @@ async function assemble(): Promise<ReportData> {
             .map(([api, calls]) => ({api, calls, plugins: apiPlugins.get(api) ?? 0}))
             .sort((a, b) => b.calls - a.calls),
         requires: Object.entries(requireCalls)
-            .map(([module, calls]) => ({module, calls, plugins: (requirePlugins.get(module) ?? []).sort()}))
+            .map(([module, calls]) => ({module, calls, plugins: (requirePlugins.get(module) ?? []).sort(), downloads: hasStoreMeta ? requireDownloads.get(module) ?? 0 : null}))
             .sort((a, b) => b.plugins.length - a.plugins.length),
         globals: Object.entries(globalCalls)
             .map(([name, calls]) => ({name, calls, plugins: globalPlugins.get(name) ?? 0}))
@@ -381,9 +429,11 @@ async function assemble(): Promise<ReportData> {
             .map(([method, calls]) => ({method, calls, plugins: patcherPlugins.get(method) ?? 0}))
             .sort((a, b) => b.plugins - a.plugins || b.calls - a.calls),
         libraryDeps: [...libraryDepAddons.entries()]
-            .map(([library, plugins]) => ({library, plugins, reads: libraryReadAddons.get(library) ?? 0}))
+            .map(([library, plugins]) => ({library, plugins, reads: libraryReadAddons.get(library) ?? 0, downloads: hasStoreMeta ? libraryDownloads.get(library) ?? 0 : null}))
             .sort((a, b) => b.plugins - a.plugins),
         libraryDepTotal: libraryDepPlugins.size,
+        libraryDepDownloads: hasStoreMeta ? libraryDepDownloads : null,
+        corpusDownloads: hasStoreMeta ? corpusDownloads : null,
         rawStyle: {rawAddons: rawStyleAddons, apiAddons: apiPlugins.get("BdApi.DOM.addStyle") ?? 0},
         hosts,
         sinks: Object.entries(injection).map(([name, count]) => ({name, count, plugins: sinkPlugins.get(name) ?? 0})).sort((a, b) => b.count - a.count),
@@ -561,8 +611,8 @@ function lifecycleTable(rows: ReportData["lifecycle"]): string {
     if (!rows.length) return `<p class="muted">none found</p>`;
     const max = rows.reduce((a, r) => Math.max(a, r.plugins), 0);
     const row = (r: ReportData["lifecycle"][number]) =>
-        `<tr><td><code>${escapeHtml(r.member)}</code></td><td><span class="chip">${LIFECYCLE_CHIPS[r.status]}</span></td><td class="bar-cell">${bar(r.plugins, max)}</td><td class="num">${fmt(r.plugins)}</td></tr>`;
-    return `<table><thead><tr><th>Member</th><th>Status</th><th></th><th class="num">Plugins defining it</th></tr></thead><tbody>${rows.map(row).join("")}</tbody></table>`;
+        `<tr><td><code>${escapeHtml(r.member)}</code></td><td><span class="chip">${LIFECYCLE_CHIPS[r.status]}</span></td><td class="bar-cell">${bar(r.plugins, max)}</td><td class="num">${fmt(r.plugins)}</td>${dlCell(r.downloads)}</tr>`;
+    return `<table><thead><tr><th>Member</th><th>Status</th><th></th><th class="num">Plugins defining it</th><th class="num">Downloads</th></tr></thead><tbody>${rows.map(row).join("")}</tbody></table>`;
 }
 
 function render(d: ReportData): string {
@@ -668,10 +718,10 @@ footer ul { padding-left: 18px; }
 
 <div class="card">
     <h2>require() usage — polyfill retirement list</h2>
-    <p class="note">BetterDiscord has no real <code>require</code>; these modules are served by the polyfill. Each list names the plugins to migrate before it can be removed. Plugins also reach the same environment without <code>require</code> &mdash; see Environment coupling below.</p>
-    <table><thead><tr><th>Module</th><th></th><th class="num">Plugins</th><th class="num">Calls</th><th class="num">&Delta; calls</th></tr></thead><tbody>
-    ${d.requires.map(r => `<tr><td><code>require("${escapeHtml(r.module)}")</code></td><td class="bar-cell">${bar(r.plugins.length, d.requires[0]?.plugins.length ?? 0)}</td><td class="num">${fmt(r.plugins.length)}</td><td class="num muted">${fmt(r.calls)}</td>${deltaCell(r.calls, prevRequires[r.module], true)}</tr>
-    <tr><td colspan="5" style="border-bottom:1px solid var(--hairline)"><details><summary>Plugins requiring <code>${escapeHtml(r.module)}</code></summary><ul>${r.plugins.map(name => `<li>${escapeHtml(name)}</li>`).join("")}</ul></details></td></tr>`).join("")}
+    <p class="note">BetterDiscord has no real <code>require</code>; these modules are served by the polyfill. Each list names the plugins to migrate before it can be removed. Plugins also reach the same environment without <code>require</code> &mdash; see Environment coupling below. <strong>Downloads</strong> is the combined <em>cumulative lifetime</em> store downloads of the plugins listed &mdash; the installed-base weight of each migration, not active users.</p>
+    <table><thead><tr><th>Module</th><th></th><th class="num">Plugins</th><th class="num">Downloads</th><th class="num">Calls</th><th class="num">&Delta; calls</th></tr></thead><tbody>
+    ${d.requires.map(r => `<tr><td><code>require("${escapeHtml(r.module)}")</code></td><td class="bar-cell">${bar(r.plugins.length, d.requires[0]?.plugins.length ?? 0)}</td><td class="num">${fmt(r.plugins.length)}</td>${dlCell(r.downloads)}<td class="num muted">${fmt(r.calls)}</td>${deltaCell(r.calls, prevRequires[r.module], true)}</tr>
+    <tr><td colspan="6" style="border-bottom:1px solid var(--hairline)"><details><summary>Plugins requiring <code>${escapeHtml(r.module)}</code></summary><ul>${r.plugins.map(name => `<li>${escapeHtml(name)}</li>`).join("")}</ul></details></td></tr>`).join("")}
     </tbody></table>
     ${since ? `<p class="note">&Delta; compares against the ${since} snapshot.</p>` : `<p class="note">No earlier snapshot yet &mdash; deltas appear once a second data date is recorded in <code>history/</code>.</p>`}
 </div>
@@ -727,7 +777,7 @@ footer ul { padding-left: 18px; }
 
 <div class="card">
     <h2>Plugin shape &mdash; the v1 lifecycle BD still honors</h2>
-    <p class="note">What plugins define, counted at definition sites via the AST rather than by name: <code>grep -l getName</code> finds 66 plugins, but 11 of those are <code>.getName()</code> <em>calls</em> on Discord modules, which are not plugin lifecycle at all. A plugin that defines a member on a nested helper class as well as on itself is counted once.</p>
+    <p class="note">What plugins define, counted at definition sites via the AST rather than by name: <code>grep -l getName</code> finds 66 plugins, but 11 of those are <code>.getName()</code> <em>calls</em> on Discord modules, which are not plugin lifecycle at all. A plugin that defines a member on a nested helper class as well as on itself is counted once. <strong>Downloads</strong> weighs each member by the <em>cumulative lifetime</em> store downloads of its defining plugins &mdash; the installed base a removal would touch, not active users.</p>
     ${lifecycleTable(d.lifecycle)}
     <p class="note"><strong><code>observer</code> is the one to act on.</strong> To serve the ${fmt(d.lifecycle.find(r => r.member === "observer")?.plugins ?? 0)} plugins that define it, core constructs a document-wide <code>MutationObserver</code> (<code>observe(document, {childList: true, subtree: true})</code>) and dispatches every mutation to every loaded plugin &mdash; a cost every user pays on every DOM change, whether or not they run any of those ${fmt(d.lifecycle.find(r => r.member === "observer")?.plugins ?? 0)}. <code>observer</code>, <code>onSwitch</code> and <code>load</code> are marked <em>removal candidates</em>, not deprecated: BD has not deprecated them, and this report is not the place to announce that it has. (<code>load</code> is redundant &mdash; a plugin's code already runs at require/eval time and in its constructor, so anything it does can move there &mdash; but many plugins never migrated.) The <code>get</code>-family is genuinely deprecated &mdash; the meta block supersedes it, and core only consults these overrides if the instance defines them.</p>
 </div>
@@ -735,7 +785,7 @@ footer ul { padding-left: 18px; }
 <div class="card">
     <h2>Discord internals reliance</h2>
     <p class="note">What the ecosystem pulls out of Discord's webpack (module keys, exported strings, prototype keys, stores, display names) and which methods it patches. This is the surface that breaks on Discord updates &mdash; the highest-demand entries are candidates for a stable <code>CommonModules</code> offering.</p>
-    <p class="note"><strong>These are floors, not totals.</strong> <strong>${fmt(d.libraryDepTotal)}</strong> of ${fmt(k.plugins)} plugins reach Discord through a library object rather than <code>BdApi</code> directly (${d.libraryDeps.map(l => `${escapeHtml(l.library)} ${fmt(l.plugins)}`).join(", ")}) &mdash; their webpack lookups and patches are attributed to the library, so they are invisible to the tables below. Detection is a runtime read of the library global, not a string mention: the four ex-dependents whose changelogs still say "no longer relies on ZeresPluginLibrary" are correctly excluded. Both libraries are unmaintained &mdash; ZeresPluginLibrary was deprecated over a year ago &mdash; so every dependent is also a plugin that will need rewriting when the library finally breaks.</p>
+    <p class="note"><strong>These are floors, not totals.</strong> <strong>${fmt(d.libraryDepTotal)}</strong> of ${fmt(k.plugins)} plugins reach Discord through a library object rather than <code>BdApi</code> directly (${d.libraryDeps.map(l => `${escapeHtml(l.library)} ${fmt(l.plugins)}${l.downloads !== null ? ` &middot; ${humanCount(l.downloads)} downloads` : ""}`).join(", ")}) &mdash; their webpack lookups and patches are attributed to the library, so they are invisible to the tables below.${d.libraryDepDownloads !== null && d.corpusDownloads ? ` In installed-base terms the blind spot is <strong>${humanCount(d.libraryDepDownloads)}</strong> of the corpus's ${humanCount(d.corpusDownloads)} cumulative downloads &mdash; ${((d.libraryDepDownloads / d.corpusDownloads) * 100).toFixed(0)}% of every copy ever installed routes its Discord access through a library these tables cannot see into.` : ""} Detection is a runtime read of the library global, not a string mention: the four ex-dependents whose changelogs still say "no longer relies on ZeresPluginLibrary" are correctly excluded. Both libraries are unmaintained &mdash; ZeresPluginLibrary was deprecated over a year ago &mdash; so every dependent is also a plugin that will need rewriting when the library finally breaks.</p>
     <div class="cols">
         <div><h2>Webpack lookup targets</h2>${targetTable(d.webpackTargets.map(t => ({label: t.value, chip: t.kind, calls: t.calls, plugins: t.plugins})), "Target")}</div>
         <div><h2>Patched methods</h2>${targetTable(d.patcherTargets.map(t => ({label: t.method, calls: t.calls, plugins: t.plugins})), "Method")}</div>
