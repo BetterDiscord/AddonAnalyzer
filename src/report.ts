@@ -6,14 +6,17 @@ import {isHazardMethod} from "./ast/rules/reacthazards";
 import {cacheFolder, resultsFolder} from "./constants";
 import {discordVarCount, discordVarSource, isDiscordVariable} from "./discordvars";
 import {DYNAMIC_SEGMENT} from "./evaluator/strings";
+import {weekStart} from "./cache";
 import {deriveKpis, METHODOLOGY, readHistory, type AddonsJson, type Kpis, type Snapshot, type SummaryJson} from "./history";
-import {loadStoreMeta, storeMetaKey} from "./storemeta";
+import {loadStoreMeta, monthsBetween, stalenessBucket, storeMetaKey, type Staleness} from "./storemeta";
 import {declaredPaths, surface, unusedPaths} from "./surface";
 
 
 type ResultValue = Record<string, number> | number | boolean | string[];
 
 interface HostStats {refs: number; addons: Set<string>;}
+
+interface StaleBucket {addons: number; downloads: number;}
 
 function escapeHtml(text: string): string {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -120,6 +123,20 @@ interface ReportData {
     // any weighted column into a share of the installed base
     corpusDownloads: number | null;
 
+    // Staleness × fragility (handoff-08 B3): will the affected addons adapt, or simply break?
+    // Buckets by last store release vs the data week (storemeta.stalenessBucket); "deprecated
+    // surface" = get-family lifecycle ∪ outdated CSS variables ∪ old-old BdApi aliases. null
+    // when store metadata is unavailable — the card is skipped rather than rendered empty.
+    staleness: {
+        dataDate: string;
+        corpus: Record<Staleness, StaleBucket>;
+        signals: Array<{label: string, buckets: Record<Staleness, StaleBucket>}>;
+        outreach: Array<{name: string, downloads: number, lastRelease: string, surfaces: string[]}>;
+        abandonedDeprecated: {addons: number, downloads: number, names: string[]};
+        observer: Record<Staleness, number>;
+        newcomers: {total: number, deprecated: number};
+    } | null;
+
     // Style injection: the API (BdApi.DOM.addStyle) vs the hand-rolled <style> element. A rare
     // case where the API is winning, so the card presents it as the good news it is.
     rawStyle: {rawAddons: number, apiAddons: number};
@@ -139,6 +156,10 @@ async function assemble(): Promise<ReportData> {
     // every weighted value null so the tables show "—" rather than claiming zero downloads
     const storeMeta = await loadStoreMeta();
     const hasStoreMeta = storeMeta.size > 0;
+
+    // Staleness buckets compare release dates against the data week's Monday — the same key
+    // the history snapshot carries — not the run date or the raw download timestamp
+    const weekDate = weekStart(new Date(meta.lastUpdated));
 
     let plugins = 0;
     let themes = 0;
@@ -164,6 +185,25 @@ async function assemble(): Promise<ReportData> {
     const libraryDownloads = new Map<string, number>(); // library -> downloads of its dependents
     let libraryDepDownloads = 0; // downloads of distinct plugins depending on any library
     let corpusDownloads = 0;
+
+    // Staleness × fragility (B3): per-bucket tallies for the whole corpus and per signal,
+    // plus the conjunction readings (outreach, silently-degraded, observer, newcomers)
+    const emptyBuckets = (): Record<Staleness, StaleBucket> => ({
+        active: {addons: 0, downloads: 0}, aging: {addons: 0, downloads: 0}, abandoned: {addons: 0, downloads: 0}
+    });
+    const stalenessCorpus = emptyBuckets();
+    const STALENESS_SIGNALS = [
+        "Hardcoded Discord classes",
+        "Outdated CSS variables",
+        "Deprecated lifecycle (get-family)",
+        "Legacy ReactDOM entry points",
+        "require() polyfill"
+    ] as const;
+    const signalBuckets = new Map<string, Record<Staleness, StaleBucket>>(STALENESS_SIGNALS.map(label => [label, emptyBuckets()]));
+    const outreach: Array<{name: string, downloads: number, lastRelease: string, surfaces: string[]}> = [];
+    const abandonedDeprecated = {addons: 0, downloads: 0, names: [] as string[]};
+    const observerBuckets: Record<Staleness, number> = {active: 0, aging: 0, abandoned: 0};
+    const newcomers = {total: 0, deprecated: 0};
     const selfUpdaters: string[] = [];
     const fragile: ReportData["fragile"] = [];
     const flagged: Array<{name: string, signals: string[]}> = [];
@@ -187,7 +227,8 @@ async function assemble(): Promise<ReportData> {
             // Cumulative lifetime downloads of this addon — the installed-base weight behind
             // every per-addon count below. 0 for the (currently unseen) case of a disk file
             // the store response doesn't cover; it then counts raw but weighs nothing.
-            const downloads = storeMeta.get(storeMetaKey(author, file))?.downloads ?? 0;
+            const store = storeMeta.get(storeMetaKey(author, file));
+            const downloads = store?.downloads ?? 0;
             corpusDownloads += downloads;
 
             for (const api of Object.keys(asRecord(results["bdapi-usage"]))) {
@@ -283,6 +324,47 @@ async function assemble(): Promise<ReportData> {
             for (const nm of overlaps) overlapDefs.set(nm, (overlapDefs.get(nm) ?? 0) + 1);
             for (const nm of outdated) outdatedUse.set(nm, (outdatedUse.get(nm) ?? 0) + 1);
             for (const nm of defs) definitionNames.add(nm);
+
+            // Staleness × fragility (B3): which maintenance bucket this addon's signals land
+            // in, plus the conjunction readings the card calls out. "Deprecated surface" is
+            // the same union the deprecatedSurfaceDownloads KPI uses: get-family lifecycle,
+            // outdated CSS variables, old-old BdApi aliases.
+            if (store) {
+                const bucket = stalenessBucket(store.latestRelease, weekDate);
+                stalenessCorpus[bucket].addons++;
+                stalenessCorpus[bucket].downloads += downloads;
+
+                const mark = (label: string, hit: boolean) => {
+                    if (!hit) return;
+                    const b = signalBuckets.get(label)![bucket];
+                    b.addons++;
+                    b.downloads += downloads;
+                };
+                const deprecatedLifecycle = Object.keys(asRecord(results.lifecycle)).filter(m => lifecycleStatus(m) === "deprecated");
+                mark("Hardcoded Discord classes", typeof tokens === "number" && tokens > 0);
+                mark("Outdated CSS variables", outdated.length > 0);
+                mark("Deprecated lifecycle (get-family)", deprecatedLifecycle.length > 0);
+                mark("Legacy ReactDOM entry points", Object.keys(asRecord(results["react-hazards"])).some(isHazardMethod));
+                mark("require() polyfill", Object.keys(asRecord(results.requires)).length > 0);
+
+                const surfaces: string[] = [];
+                if (deprecatedLifecycle.length) surfaces.push("get-family lifecycle");
+                if (outdated.length) surfaces.push("outdated CSS variables");
+                if (Object.keys(asRecord(results["deprecated-apis"])).length) surfaces.push("legacy BdApi aliases");
+                if (surfaces.length && bucket === "active") {
+                    outreach.push({name, downloads, lastRelease: store.latestRelease.slice(0, 10), surfaces});
+                }
+                if (surfaces.length && bucket === "abandoned") {
+                    abandonedDeprecated.addons++;
+                    abandonedDeprecated.downloads += downloads;
+                    abandonedDeprecated.names.push(name);
+                }
+                if (Object.hasOwn(asRecord(results.lifecycle), "observer")) observerBuckets[bucket]++;
+                if (monthsBetween(store.initialRelease, weekDate) <= 12) {
+                    newcomers.total++;
+                    if (surfaces.length) newcomers.deprecated++;
+                }
+            }
         }
     }
 
@@ -434,6 +516,15 @@ async function assemble(): Promise<ReportData> {
         libraryDepTotal: libraryDepPlugins.size,
         libraryDepDownloads: hasStoreMeta ? libraryDepDownloads : null,
         corpusDownloads: hasStoreMeta ? corpusDownloads : null,
+        staleness: hasStoreMeta ? {
+            dataDate: weekDate,
+            corpus: stalenessCorpus,
+            signals: STALENESS_SIGNALS.map(label => ({label, buckets: signalBuckets.get(label)!})),
+            outreach: outreach.sort((a, b) => b.downloads - a.downloads),
+            abandonedDeprecated: {...abandonedDeprecated, names: abandonedDeprecated.names.sort()},
+            observer: observerBuckets,
+            newcomers
+        } : null,
         rawStyle: {rawAddons: rawStyleAddons, apiAddons: apiPlugins.get("BdApi.DOM.addStyle") ?? 0},
         hosts,
         sinks: Object.entries(injection).map(([name, count]) => ({name, count, plugins: sinkPlugins.get(name) ?? 0})).sort((a, b) => b.count - a.count),
@@ -547,6 +638,54 @@ function cssVarTable(rows: Array<{name: string, addons: number}>, visible = 15):
         ? `</tbody></table><details><summary>Show ${rest.length} more</summary><table><tbody>${rest.map(row).join("")}</tbody></table></details>`
         : "</tbody></table>";
     return head + rows.slice(0, visible).map(row).join("") + tail;
+}
+
+// ---- staleness × fragility (handoff-08 B3) ---------------------------------
+
+function bucketCell(b: StaleBucket): string {
+    return `<td class="num">${fmt(b.addons)} <span class="muted">&middot; ${humanCount(b.downloads)}</span></td>`;
+}
+
+// Actively-maintained addons still on a deprecated surface, ranked by installed base — the
+// one table where downloads IS the sort key: it exists to order outreach by leverage.
+function outreachTable(rows: NonNullable<ReportData["staleness"]>["outreach"], visible = 15): string {
+    if (!rows.length) return `<p class="muted">&#10003; no actively-maintained addon touches a deprecated surface</p>`;
+    const max = rows[0]?.downloads ?? 0;
+    const row = (r: (typeof rows)[number]) =>
+        `<tr><td>${escapeHtml(r.name)}</td><td class="bar-cell">${bar(r.downloads, max)}</td><td class="num">${humanCount(r.downloads)}</td><td class="num muted">${escapeHtml(r.lastRelease)}</td><td>${r.surfaces.map(s => `<span class="chip">${escapeHtml(s)}</span>`).join("")}</td></tr>`;
+    const head = `<table><thead><tr><th>Addon</th><th></th><th class="num">Downloads</th><th class="num">Last release</th><th>Surface</th></tr></thead><tbody>`;
+    const rest = rows.slice(visible);
+    const tail = rest.length
+        ? `</tbody></table><details><summary>Show ${rest.length} more</summary><table><tbody>${rest.map(row).join("")}</tbody></table></details>`
+        : "</tbody></table>";
+    return head + rows.slice(0, visible).map(row).join("") + tail;
+}
+
+function stalenessCard(s: ReportData["staleness"]): string {
+    if (!s) return ""; // no store metadata this run — skip the card rather than render empty buckets
+    const observerTotal = s.observer.active + s.observer.aging + s.observer.abandoned;
+    return `<div class="card">
+    <h2>Maintenance state &times; fragility &mdash; will the affected addons adapt?</h2>
+    <p class="note">Every removal decision above hinges on the same follow-up: do the affected addons still ship releases, or will they simply break? Addons bucket by last <em>store release</em> relative to the ${escapeHtml(s.dataDate)} data week: <strong>active</strong> &le; 6 months, <strong>aging</strong> 6&ndash;24 months, <strong>abandoned</strong> &gt; 24 months. A release date measures store activity, not author intent &mdash; a stable, finished addon looks abandoned here &mdash; so staleness is never treated as a defect on its own; the readings below are conjunctions with a fragile or deprecated surface. Cells read <em>addons &middot; cumulative downloads</em> (installed base, never active users).</p>
+    <table><thead><tr><th>Signal</th><th class="num">Active &le; 6mo</th><th class="num">Aging 6&ndash;24mo</th><th class="num">Abandoned &gt; 24mo</th></tr></thead><tbody>
+    <tr><td><strong>Whole corpus</strong></td>${bucketCell(s.corpus.active)}${bucketCell(s.corpus.aging)}${bucketCell(s.corpus.abandoned)}</tr>
+    ${s.signals.map(sig => `<tr><td>${escapeHtml(sig.label)}</td>${bucketCell(sig.buckets.active)}${bucketCell(sig.buckets.aging)}${bucketCell(sig.buckets.abandoned)}</tr>`).join("")}
+    </tbody></table>
+    ${observerTotal ? `<p class="note"><strong>The <code>observer</code> memo sharpens:</strong> of the ${fmt(observerTotal)} plugins keeping core's document-wide MutationObserver alive, ${fmt(s.observer.abandoned)} ${s.observer.abandoned === 1 ? "is" : "are"} abandoned and ${fmt(s.observer.active)} active${s.observer.active === 0 ? " &mdash; the cost every user pays on every DOM change serves only plugins that will never update and never complain" : ""}.</p>` : ""}
+    <p class="note">Of the ${fmt(s.newcomers.total)} addons first released within 12 months of the data date, ${fmt(s.newcomers.deprecated)} launched already touching a deprecated surface${s.newcomers.deprecated === 0 ? " &mdash; new addons are being written against the current surface, which is the ecosystem learning" : " &mdash; deprecated patterns are still being adopted, not merely inherited"}.</p>
+    <div class="cols">
+        <div>
+            <h2>Outreach shortlist <span class="chip">active &and; deprecated surface</span></h2>
+            <p class="note">Actively-maintained addons still on a deprecated surface: authors who plausibly respond, ranked by the installed base their fix would carry.</p>
+            ${outreachTable(s.outreach)}
+        </div>
+        <div>
+            <h2>Already silently degraded <span class="chip">abandoned &and; deprecated surface</span></h2>
+            <p class="note"><strong>${fmt(s.abandonedDeprecated.addons)}</strong> addons (${humanCount(s.abandonedDeprecated.downloads)} cumulative downloads) have not shipped in over two years <em>and</em> sit on a surface that already resolves to nothing. Their styling or overrides are degraded for every current install today; removing the surface costs them nothing further.</p>
+            ${s.abandonedDeprecated.names.length ? `<details><summary>Show all ${fmt(s.abandonedDeprecated.addons)}</summary><ul>${s.abandonedDeprecated.names.map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ul></details>` : `<p class="muted">none found</p>`}
+        </div>
+    </div>
+</div>`;
 }
 
 // Field coverage: how much of the corpus ships each meta field, required ones first
@@ -823,6 +962,8 @@ footer ul { padding-left: 18px; }
     <p class="note">The CSS-variable analog of a stale hardcoded class. <strong>${fmt(d.cssVars.outdatedAddons)}</strong> addons still define or read a name from Discord's former semantic layer (<code>--background-primary</code>, <code>--text-normal</code>, <code>--interactive-normal</code>, the <code>--brand-experiment-*</code> scale&hellip;) &mdash; each now resolves to nothing, so the styling is dead. Matched against the manifest's <code>deprecated</code> list of Discord's removed names, never inferred from the corpus.</p>
     ${cssVarTable(d.cssVars.topOutdated)}
 </div>
+
+${stalenessCard(d.staleness)}
 
 <div class="card">
     <h2>Network hosts — CSP planning</h2>
