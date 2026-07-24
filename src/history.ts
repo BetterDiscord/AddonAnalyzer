@@ -1,7 +1,9 @@
 import fs from "fs/promises";
 import path from "path";
+import {lifecycleStatus} from "./ast/rules/lifecycle";
 import {weekStart} from "./cache";
 import {cacheFolder, historyFolder, resultsFolder} from "./constants";
+import {loadStoreMeta, stalenessBucket, storeMetaKey, type StoreMetaMap} from "./storemeta";
 import {unusedPaths} from "./surface";
 import type {Results} from "./types";
 
@@ -46,6 +48,23 @@ export interface Kpis {
     // coloured. Store files only (summed summary.size.bytes), so it excludes remote @import CSS.
     // Absent on snapshots predating this KPI; the report degrades rather than inventing a delta.
     corpusBytes: number;
+
+    // Combined cumulative lifetime downloads of the analyzed corpus (handoff-08): the
+    // installed-base denominator, as corpusBytes is the code-size one. Neutral context, never
+    // coloured — but the snapshot-to-snapshot delta of this series is download *velocity*,
+    // which is why it is recorded from day one. Absent on older snapshots; the report degrades.
+    corpusDownloads: number;
+
+    // Share (percent, one decimal) of addons whose latest store release is > 24 months before
+    // the data date (storemeta.stalenessBucket). Context, not a defect count — a stable,
+    // finished addon looks abandoned by this metric. Neutral ink. Absent on older snapshots.
+    abandonedShare: number;
+
+    // Combined downloads of addons touching >= 1 deprecated surface: a get-family lifecycle
+    // member, an outdated (removed) Discord CSS variable, or an old-old deprecated BdApi
+    // alias. The one download KPI with a direction — down means the migration campaigns are
+    // working — so its delta may colour green. Absent on older snapshots; the report degrades.
+    deprecatedSurfaceDownloads: number;
 }
 
 export interface Snapshot {
@@ -69,7 +88,11 @@ function asRecord(value: Results | undefined): Record<string, number> {
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-export function deriveKpis(addons: AddonsJson, summary: SummaryJson): Kpis {
+// `store`/`dataDate` feed the download KPIs: the store metadata map (empty when the cache
+// file is unreadable — the KPIs then read 0) and the ISO-week Monday the staleness buckets
+// compare release dates against. Both callers pass the same values, so a tile and the
+// snapshot it is compared against cannot disagree.
+export function deriveKpis(addons: AddonsJson, summary: SummaryJson, store: StoreMetaMap, dataDate: string): Kpis {
     const kpis: Kpis = {
         plugins: 0,
         themes: 0,
@@ -82,8 +105,14 @@ export function deriveKpis(addons: AddonsJson, summary: SummaryJson): Kpis {
         metaProblemAddons: 0,
         selfUpdating: 0,
         unusedApis: unusedPaths(Object.keys(asRecord(summary["bdapi-usage"]))).length,
-        corpusBytes: Number(asRecord(summary.size).bytes ?? 0)
+        corpusBytes: Number(asRecord(summary.size).bytes ?? 0),
+        corpusDownloads: 0,
+        abandonedShare: 0,
+        deprecatedSurfaceDownloads: 0
     };
+
+    let withMeta = 0;
+    let abandoned = 0;
 
     for (const author of Object.keys(addons)) {
         for (const [file, results] of Object.entries(addons[author])) {
@@ -95,8 +124,25 @@ export function deriveKpis(addons: AddonsJson, summary: SummaryJson): Kpis {
             if (typeof results["class-literals"] === "number" && results["class-literals"] > 0) kpis.fragileAddons++;
             if (Object.keys(asRecord(results["meta-problems"])).length) kpis.metaProblemAddons++;
             if (results["self-updating"] === true) kpis.selfUpdating++;
+
+            const storeEntry = store.get(storeMetaKey(author, file));
+            if (!storeEntry) continue;
+            withMeta++;
+            kpis.corpusDownloads += storeEntry.downloads;
+            if (stalenessBucket(storeEntry.latestRelease, dataDate) === "abandoned") abandoned++;
+
+            // Same union the report's staleness card uses for "deprecated surface" — keep
+            // the two in sync or the tile and the card will tell different stories
+            const getFamily = Object.keys(asRecord(results.lifecycle)).some(m => lifecycleStatus(m) === "deprecated");
+            const outdatedVars = Object.keys(asRecord(results["css-var-outdated"])).length > 0;
+            const legacyAliases = Object.keys(asRecord(results["deprecated-apis"])).length > 0;
+            if (getFamily || outdatedVars || legacyAliases) kpis.deprecatedSurfaceDownloads += storeEntry.downloads;
         }
     }
+
+    // One decimal is display precision; rounding here (not at render) keeps the snapshot
+    // JSON stable so an unchanged re-run still hits writeSnapshot's no-op guard
+    kpis.abandonedShare = withMeta ? Math.round((abandoned / withMeta) * 1000) / 10 : 0;
 
     return kpis;
 }
@@ -110,11 +156,12 @@ export async function writeSnapshot(): Promise<Snapshot> {
     const addons = await readJson<AddonsJson>(path.join(resultsFolder, "addons.json"));
     const meta = await readJson<{lastUpdated: string}>(path.join(cacheFolder, "meta.json"));
 
+    const dataDate = weekStart(new Date(meta.lastUpdated));
     const snapshot: Snapshot = {
-        dataDate: weekStart(new Date(meta.lastUpdated)),
+        dataDate,
         generated: new Date().toISOString(),
         methodology: METHODOLOGY,
-        kpis: deriveKpis(addons, summary),
+        kpis: deriveKpis(addons, summary, await loadStoreMeta(), dataDate),
         summary
     };
 

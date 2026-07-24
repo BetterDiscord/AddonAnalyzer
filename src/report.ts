@@ -424,16 +424,19 @@ async function assemble(): Promise<ReportData> {
     const dataDate = meta.lastUpdated.slice(0, 10);
 
     // The newest snapshot is this run's own data; "previous" is the newest older dataDate.
-    // Comparing against a snapshot with the same dataDate would always show a delta of zero.
+    // Compare on the ISO-week Monday (weekDate) — the key snapshots are written under — not
+    // the raw download date: a cache downloaded mid-week has raw date > its own snapshot's
+    // Monday key, which made the strict < admit this week's snapshot as "previous" and
+    // zeroed every delta on locally-downloaded caches.
     const history = await readHistory();
-    const previous = history.filter(s => s.dataDate < dataDate).pop() ?? null;
+    const previous = history.filter(s => s.dataDate < weekDate).pop() ?? null;
 
-    const kpis = deriveKpis(addons, summary);
+    const kpis = deriveKpis(addons, summary, storeMeta, weekDate);
 
     // Last 12 snapshots, with the current data as the final point (replacing this
     // dataDate's own snapshot if one was written, so a stale file cannot disagree)
     let kpiSeries: ReportData["kpiSeries"] = null;
-    const trail = history.filter(s => s.dataDate < dataDate).slice(-11);
+    const trail = history.filter(s => s.dataDate < weekDate).slice(-11);
     if (trail.length >= 2) {
         kpiSeries = Object.fromEntries(
             (Object.keys(kpis) as Array<keyof Kpis>).map(key => [key, [...trail.map(s => s.kpis[key]), kpis[key]]])
@@ -845,6 +848,9 @@ footer ul { padding-left: 18px; }
     <div class="tile"><div class="label">Themes analyzed</div><div class="value">${fmt(k.themes)}</div>${deltaLine(k.themes, p?.themes, since, false)}${spark(series?.themes)}</div>
     <div class="tile"><div class="label">Authors</div><div class="value">${fmt(k.authors)}</div>${deltaLine(k.authors, p?.authors, since, false)}${spark(series?.authors)}</div>
     <div class="tile"><div class="label">Corpus size</div><div class="value">${humanBytes(k.corpusBytes)}</div>${deltaLine(k.corpusBytes, p?.corpusBytes, since, false, "total store source", humanBytes)}${spark(series?.corpusBytes)}</div>
+    <div class="tile"><div class="label">Cumulative downloads</div><div class="value">${humanCount(k.corpusDownloads)}</div>${deltaLine(k.corpusDownloads, p?.corpusDownloads, since, false, "lifetime store downloads", humanCount)}${spark(series?.corpusDownloads)}</div>
+    <div class="tile"><div class="label">Deprecated-surface downloads</div><div class="value">${humanCount(k.deprecatedSurfaceDownloads)}</div>${deltaLine(k.deprecatedSurfaceDownloads, p?.deprecatedSurfaceDownloads, since, true, "installs on removed surfaces", humanCount)}${spark(series?.deprecatedSurfaceDownloads)}</div>
+    <div class="tile"><div class="label">Abandoned share</div><div class="value">${k.abandonedShare.toFixed(1)}%</div>${deltaLine(k.abandonedShare, p?.abandonedShare, since, false, "no release in over 2 years", n => `${n.toFixed(1)}pp`)}${spark(series?.abandonedShare)}</div>
     <div class="tile"><div class="label">Parse errors</div><div class="value">${fmt(k.parseErrors)}</div><div class="delta${k.parseErrors === 0 ? " good" : ""}">${k.parseErrors === 0 ? "&#10003; full AST coverage" : "plugins skipped"}</div>${spark(series?.parseErrors)}</div>
     <div class="tile"><div class="label">Legacy API uses</div><div class="value">${fmt(k.deprecatedUses)}</div><div class="delta${k.deprecatedUses === 0 ? " good" : ""}">${k.deprecatedUses === 0 ? "&#10003; old-old APIs are gone" : "see bdapi table"}</div>${spark(series?.deprecatedUses)}</div>
     <div class="tile"><div class="label">Uncalled API members</div><div class="value">${fmt(k.unusedApis)}</div>${deltaLine(k.unusedApis, p?.unusedApis, since, true, `of ${fmt(d.declaredApis)} BdApi declares`)}${spark(series?.unusedApis)}</div>

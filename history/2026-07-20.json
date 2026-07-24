@@ -1,6 +1,6 @@
 {
     "dataDate": "2026-07-20",
-    "generated": "2026-07-21T05:58:08.909Z",
+    "generated": "2026-07-24T01:24:12.523Z",
     "methodology": 2,
     "kpis": {
         "plugins": 208,
@@ -14,7 +14,10 @@
         "metaProblemAddons": 10,
         "selfUpdating": 48,
         "unusedApis": 27,
-        "corpusBytes": 17283995
+        "corpusBytes": 17283995,
+        "corpusDownloads": 54737721,
+        "abandonedShare": 17.3,
+        "deprecatedSurfaceDownloads": 38023794
     },
     "summary": {
         "class-literals": 455685,
