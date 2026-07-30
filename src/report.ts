@@ -176,6 +176,7 @@ async function assemble(): Promise<ReportData> {
     const libraryReadAddons = new Map<string, number>(); // library -> addons that actively call it
     const libraryDepPlugins = new Set<string>(); // distinct plugins depending on any library
     let rawStyleAddons = 0; // plugins hand-rolling a <style> element
+    let rawScriptAddons = 0; // plugins creating a <script> element
     const metaFieldAddons = new Map<string, number>();
     const metaProblemAddons = new Map<string, string[]>();
     const phantomPlugins = new Map<string, string[]>();
@@ -279,7 +280,9 @@ async function assemble(): Promise<ReportData> {
                 const lib = sig.slice(0, -":read".length);
                 libraryReadAddons.set(lib, (libraryReadAddons.get(lib) ?? 0) + 1);
             }
-            if (Object.keys(asRecord(results["raw-dom"])).includes("raw-style-element")) rawStyleAddons++;
+            const rawDomShapes = Object.keys(asRecord(results["raw-dom"]));
+            if (rawDomShapes.includes("raw-style-element")) rawStyleAddons++;
+            if (rawDomShapes.includes("raw-script-element")) rawScriptAddons++;
             for (const field of Object.keys(asRecord(results["meta-fields"]))) {
                 metaFieldAddons.set(field, (metaFieldAddons.get(field) ?? 0) + 1);
             }
@@ -399,6 +402,10 @@ async function assemble(): Promise<ReportData> {
     const reactCalls = asRecord(summary["react-hazards"]);
     const injection = asRecord(summary["html-injection"]);
     const dynamic = asRecord(summary["dynamic-code"]);
+    // Detected by the raw-dom rule but classified with the code sinks: a <script> element loads
+    // and executes code, same family as eval/Function/Worker (handoff-08 A3). The raw <style>
+    // shape stays on the Environment coupling card via rawStyle below.
+    const scriptElementUses = asRecord(summary["raw-dom"])["raw-script-element"] ?? 0;
     const signals = asRecord(summary["obfuscation-signals"]);
     const webpackCalls = asRecord(summary["webpack-targets"]);
     const patcherCalls = asRecord(summary["patcher-targets"]);
@@ -531,7 +538,10 @@ async function assemble(): Promise<ReportData> {
         rawStyle: {rawAddons: rawStyleAddons, apiAddons: apiPlugins.get("BdApi.DOM.addStyle") ?? 0},
         hosts,
         sinks: Object.entries(injection).map(([name, count]) => ({name, count, plugins: sinkPlugins.get(name) ?? 0})).sort((a, b) => b.count - a.count),
-        dynamicCode: Object.entries(dynamic).map(([name, count]) => ({name, count, plugins: dynamicPlugins.get(name) ?? 0})).sort((a, b) => b.count - a.count),
+        dynamicCode: [
+            ...Object.entries(dynamic).map(([name, count]) => ({name, count, plugins: dynamicPlugins.get(name) ?? 0})),
+            ...(scriptElementUses ? [{name: "createElement(\"script\")", count: scriptElementUses, plugins: rawScriptAddons}] : []),
+        ].sort((a, b) => b.count - a.count),
         obfuscationSignals: Object.entries(signals).map(([name, count]) => ({name, plugins: count})).sort((a, b) => b.plugins - a.plugins),
         flagged: flagged.sort((a, b) => b.signals.length - a.signals.length),
     };
@@ -771,6 +781,10 @@ function render(d: ReportData): string {
     const fragileSeries = methodologyBreak ? undefined : series?.fragileAddons;
 
     const prevRequires = asRecord(d.previous?.summary.requires);
+
+    // @updateUrl convention size for the meta-card caption — live from the field coverage data
+    // (the two case-variant strays, updateurl/updateURL, are left out of the convention count)
+    const updateUrlAddons = d.metaFields.find(f => f.field === "updateUrl")?.addons ?? 0;
     const nsMax = d.namespaces[0]?.calls ?? 0;
     const prevApis = asRecord(d.previous?.summary["bdapi-usage"]);
     // Neutral direction: this table measures the blast radius of an API change, and a rising
@@ -985,7 +999,7 @@ ${stalenessCard(d.staleness)}
 
 <div class="card">
     <h2>Meta health</h2>
-    <p class="note">Every addon opens with a JSDoc meta block, parsed by BetterDiscord's <code>parseJsDoc</code>. This table is what BD itself sees: the same parser runs here, so a field listed as present is a field BD resolves. <code>@name</code>, <code>@author</code>, <code>@description</code> and <code>@version</code> are required; BD papers over the last three at load time with <code>Unknown Author</code> / <code>???</code> / <code>No description</code>, so a missing one degrades the UI rather than failing outright. Non-standard fields are author or library conventions BD ignores &mdash; they are listed for coverage, not judged.</p>
+    <p class="note">Every addon opens with a JSDoc meta block, parsed by BetterDiscord's <code>parseJsDoc</code>. This table is what BD itself sees: the same parser runs here, so a field listed as present is a field BD resolves. <code>@name</code>, <code>@author</code>, <code>@description</code> and <code>@version</code> are required; BD papers over the last three at load time with <code>Unknown Author</code> / <code>???</code> / <code>No description</code>, so a missing one degrades the UI rather than failing outright. Non-standard fields are author or library conventions BD ignores &mdash; they are listed for coverage, not judged. The largest such convention is <code>@updateUrl</code>: ${fmt(updateUrlAddons)} addons (${((updateUrlAddons / d.corpus) * 100).toFixed(0)}%) carry a field BD never reads &mdash; de-facto demand evidence for a first-party update mechanism. Nearly nothing fetches it today (a 2026-07 probe put the hosts at <code>mwittrien.github.io</code> 54, <code>raw.githubusercontent.com</code> 28, then singletons; the one remaining ZeresPluginLibrary dependent is the only self-rolled reader), so these URLs stay advisory and are deliberately excluded from the CSP host inventories.</p>
     <div class="cols">
         <div>
             <h2>Field coverage</h2>
@@ -1030,6 +1044,9 @@ ${stalenessCard(d.staleness)}
     <table><thead><tr><th>Plugin</th><th>Signals</th></tr></thead><tbody>
     ${d.flagged.map(f => `<tr><td>${escapeHtml(f.name)}</td><td>${f.signals.map(s => `<span class="chip">${escapeHtml(s)}</span>`).join("")}</td></tr>`).join("")}
     </tbody></table>
+
+    <h2 style="margin-top:16px">Checked and absent</h2>
+    <p class="note">Sinks probed across every plugin (2026-07) and found nowhere in the store corpus &mdash; a clean probe is a finding about store health, so it is cited rather than silently lacking a rule: <code>child_process</code> (no shell execution at all), string-argument <code>setTimeout</code>/<code>setInterval</code>, <code>document.write</code>, auth-token webpack lookups (<code>getToken</code>), dynamic <code>import()</code> of remote URLs, and hardcoded Discord REST paths (the three plugins matching <code>/api/vN</code> call third-party APIs &mdash; translation, game stores &mdash; and the lone <code>discord.com</code> network sink is an asset fetch). Raw <code>localStorage</code> appears in one plugin, on a dead code path.</p>
 </div>
 
 <footer>
