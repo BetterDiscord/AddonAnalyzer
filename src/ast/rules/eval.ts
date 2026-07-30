@@ -26,6 +26,10 @@ function dynamicCodeKind(node: ESTree.Node, context: RuleContext): string | null
     // `new eval()` is a TypeError, so eval only counts as a call
     if (resolved[0] === "eval" && node.type === "CallExpression") return "eval";
     if (resolved[0] === "Function") return "Function";
+    // A worker script is fetched and executed, so it belongs with the code sinks; `Worker(...)`
+    // without `new` throws, and bundled gif.js code aliases the name (Worker2, GifWorker), which
+    // the exact-name match already excludes
+    if (resolved[0] === "Worker" && node.type === "NewExpression") return "Worker";
     return null;
 }
 

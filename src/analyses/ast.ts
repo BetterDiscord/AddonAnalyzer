@@ -216,9 +216,10 @@ export const libraryDepSignals: Analysis = {
     }
 };
 
-// Hand-rolled DOM work BdApi already offers, keyed by shape. Currently just raw <style> injection
-// (document.createElement("style")); its API counterpart BdApi.DOM.addStyle is counted by
-// bdapi-usage, so the report pairs the two from there rather than double-counting it here.
+// Raw element creation keyed by shape. raw-style-element (document.createElement("style")) is the
+// hand-rolled counterpart of BdApi.DOM.addStyle, which bdapi-usage counts — the report pairs the
+// two from there rather than double-counting here. raw-script-element is a code-loading sink and
+// reports on the security card beside eval/Function/Worker instead.
 export const rawDom: Analysis = {
     key: "raw-dom",
     types: [Type.Plugin],
