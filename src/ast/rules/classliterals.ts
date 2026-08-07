@@ -45,7 +45,8 @@ function buildFinding(token: string, context: RuleContext, loc: Finding["loc"]):
     };
 }
 
-function stringsOf(node: ESTree.Node): string[] {
+// Exported for the substring-selectors rule, which scans plugin strings the same way
+export function stringsOf(node: ESTree.Node): string[] {
     if (node.type === "Literal") return typeof node.value === "string" ? [node.value] : [];
     if (node.type === "TemplateLiteral") {
         return node.quasis.map(q => q.value.cooked ?? "").filter(Boolean);

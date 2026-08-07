@@ -15,9 +15,11 @@ import {type Finding, type Rule, type RuleContext} from "../types";
 
 // Comments and quoted strings are blanked (length- and newline-preserving, so loc stays correct)
 // before scanning, so `/* --x: */` and `content: "var(--x)"` are must-not-matches.
+// Exported for the substring-selectors rule, which needs the identical blanking — one
+// implementation, not two subtly-different copies (the css-url IMPORT_PATTERN precedent).
 const COMMENT = /\/\*[\s\S]*?\*\//g;
 const STRING = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g;
-function blankNonCode(css: string): string {
+export function blankNonCode(css: string): string {
     const blank = (m: string) => m.replace(/[^\n]/g, " ");
     return css.replace(COMMENT, blank).replace(STRING, blank);
 }

@@ -1,4 +1,4 @@
-import {analyzeAddon, classLiteralsRule, cssUrlRule, cssVariablesRule, rules, type Finding} from "../ast";
+import {analyzeAddon, classLiteralsRule, cssUrlRule, cssVariablesRule, rules, substringSelectorsRule, type Finding} from "../ast";
 import {DYNAMIC_SEGMENT} from "../evaluator/strings";
 import {phantomPath} from "../surface";
 import {Type, type Analysis, type CachedAddon} from "../types";
@@ -6,9 +6,9 @@ import {Type, type Analysis, type CachedAddon} from "../types";
 
 // The CSS-content rules re-run over a theme's remote @import content (see below). Deliberately not
 // the whole rule set: meta must not run on remote CSS (it has no meta block, so every import would
-// report no-meta-block). css-url/class-literals/css-variables are the rules whose subject is the CSS
-// itself, so they extend naturally to the remote content the store file only loads.
-const REMOTE_CONTENT_RULES = [cssUrlRule, classLiteralsRule, cssVariablesRule];
+// report no-meta-block). css-url/class-literals/css-variables/substring-selectors are the rules whose
+// subject is the CSS itself, so they extend naturally to the remote content the store file only loads.
+const REMOTE_CONTENT_RULES = [cssUrlRule, classLiteralsRule, cssVariablesRule, substringSelectorsRule];
 
 // One parse+walk per addon shared by every AST-backed analysis below
 const findingsCache = new WeakMap<CachedAddon, Finding[]>();
@@ -245,6 +245,16 @@ export const classLiterals: Analysis = {
     key: "class-literals",
     types: [Type.Plugin, Type.Theme],
     run: (addon) => getFindings(addon).filter(f => f.rule === "class-literals").length
+};
+
+// Attribute-substring class selectors ([class*="wrapper_"] / [class^=) — the churn-resilient
+// counterpart of class-literals, counted over the same content (store file + remote @import CSS
+// for themes, string literals for plugins). A per-addon adoption count; the report derives
+// addon presence from it, the same raw-occurrences shape as class-literals.
+export const substringSelectors: Analysis = {
+    key: "substring-selectors",
+    types: [Type.Plugin, Type.Theme],
+    run: (addon) => getFindings(addon).filter(f => f.rule === "substring-selectors").length
 };
 
 // Two independent signals for a plugin that installs executable code: a write into a .plugin.js
