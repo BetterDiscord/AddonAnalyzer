@@ -96,6 +96,12 @@ interface ReportData {
     fragile: Array<{name: string, tokens: number, perKb: number, type: "plugin" | "theme"}>;
     fragileAddons: number;
 
+    // Attribute-substring class selectors ([class*= / [class^=): the churn-resilient counterpart
+    // of `fragile`, counted over the same content (store file + remote @import CSS for themes,
+    // string literals for plugins). Addon presence split by type, plus raw selector occurrences —
+    // rendered as the healthy-pairing caption on the hardcoded-classes card.
+    resilient: {themes: number, plugins: number, selectors: number};
+
     // CSS custom properties: the healthy counterpart to hardcoded classes. Consuming Discord's
     // variables survives class churn; defining (reskinning) Discord's own names is how themes
     // retheme but also how they break on a Discord rename. Counted over theme + embedded-CSS content.
@@ -207,6 +213,7 @@ async function assemble(): Promise<ReportData> {
     const newcomers = {total: 0, deprecated: 0};
     const selfUpdaters: string[] = [];
     const fragile: ReportData["fragile"] = [];
+    const resilient: ReportData["resilient"] = {themes: 0, plugins: 0, selectors: 0};
     const flagged: Array<{name: string, signals: string[]}> = [];
 
     // CSS-variable presence, counted per addon (a name defined 40× in one theme is one addon here)
@@ -309,6 +316,12 @@ async function assemble(): Promise<ReportData> {
                 const analyzedBytes = (sz.bytes ?? 0) + (sz.remoteBytes ?? 0);
                 const perKb = analyzedBytes > 0 ? tokens / (analyzedBytes / 1000) : 0;
                 fragile.push({name, tokens, perKb, type: file.endsWith(".plugin.js") ? "plugin" : "theme"});
+            }
+            const substringSelectors = results["substring-selectors"];
+            if (typeof substringSelectors === "number" && substringSelectors > 0) {
+                resilient.selectors += substringSelectors;
+                if (file.endsWith(".plugin.js")) resilient.plugins++;
+                else resilient.themes++;
             }
             if (results["obfuscated-plugins"] === true) {
                 flagged.push({name, signals: Object.keys(asRecord(results["obfuscation-signals"]))});
@@ -501,6 +514,7 @@ async function assemble(): Promise<ReportData> {
             .sort((a, b) => Number(b.hazard) - Number(a.hazard) || b.plugins - a.plugins),
         fragile: fragile.sort((a, b) => b.tokens - a.tokens),
         fragileAddons: fragile.length,
+        resilient,
         cssVars: {
             consumeDiscordAddons,
             defineAddons,
@@ -555,13 +569,14 @@ function bar(value: number, max: number): string {
 }
 
 // Green is reserved for movement in a direction the maintainers actually want. Corpus growth is
-// neutral (more plugins is not "good"), so it stays secondary ink; a dropping require count is
-// the campaign working. Nothing is ever coloured red — this report is not a scoreboard.
-function deltaLine(current: number, previous: number | undefined, since: string | undefined, lowerIsBetter: boolean, fallback = "", format: (n: number) => string = fmt): string {
+// neutral (more plugins is not "good", so "none"), a dropping require count is the campaign
+// working ("down") — and rising resilient-selector adoption is the one "up" KPI. Nothing is
+// ever coloured red — this report is not a scoreboard.
+function deltaLine(current: number, previous: number | undefined, since: string | undefined, goodDirection: "down" | "up" | "none", fallback = "", format: (n: number) => string = fmt): string {
     if (previous === undefined || since === undefined) return fallback ? `<div class="delta">${fallback}</div>` : "";
     const change = current - previous;
     if (change === 0) return `<div class="delta">no change since ${since}</div>`;
-    const good = lowerIsBetter && change < 0;
+    const good = (goodDirection === "down" && change < 0) || (goodDirection === "up" && change > 0);
     return `<div class="delta${good ? " good" : ""}">${change > 0 ? "+" : "&minus;"}${format(Math.abs(change))} since ${since}</div>`;
 }
 
@@ -858,21 +873,22 @@ footer ul { padding-left: 18px; }
 <p class="sub">Official store corpus &middot; report generated ${d.generated} &middot; addon data updated ${d.dataDate}</p>
 
 <div class="kpis">
-    <div class="tile"><div class="label">Plugins analyzed</div><div class="value">${fmt(k.plugins)}</div>${deltaLine(k.plugins, p?.plugins, since, false)}${spark(series?.plugins)}</div>
-    <div class="tile"><div class="label">Themes analyzed</div><div class="value">${fmt(k.themes)}</div>${deltaLine(k.themes, p?.themes, since, false)}${spark(series?.themes)}</div>
-    <div class="tile"><div class="label">Authors</div><div class="value">${fmt(k.authors)}</div>${deltaLine(k.authors, p?.authors, since, false)}${spark(series?.authors)}</div>
-    <div class="tile"><div class="label">Corpus size</div><div class="value">${humanBytes(k.corpusBytes)}</div>${deltaLine(k.corpusBytes, p?.corpusBytes, since, false, "total store source", humanBytes)}${spark(series?.corpusBytes)}</div>
-    <div class="tile"><div class="label">Cumulative downloads</div><div class="value">${humanCount(k.corpusDownloads)}</div>${deltaLine(k.corpusDownloads, p?.corpusDownloads, since, false, "lifetime store downloads", humanCount)}${spark(series?.corpusDownloads)}</div>
-    <div class="tile"><div class="label">Deprecated-surface downloads</div><div class="value">${humanCount(k.deprecatedSurfaceDownloads)}</div>${deltaLine(k.deprecatedSurfaceDownloads, p?.deprecatedSurfaceDownloads, since, true, "installs on removed surfaces", humanCount)}${spark(series?.deprecatedSurfaceDownloads)}</div>
-    <div class="tile"><div class="label">Abandoned share</div><div class="value">${k.abandonedShare.toFixed(1)}%</div>${deltaLine(k.abandonedShare, p?.abandonedShare, since, false, "no release in over 2 years", n => `${n.toFixed(1)}pp`)}${spark(series?.abandonedShare)}</div>
+    <div class="tile"><div class="label">Plugins analyzed</div><div class="value">${fmt(k.plugins)}</div>${deltaLine(k.plugins, p?.plugins, since, "none")}${spark(series?.plugins)}</div>
+    <div class="tile"><div class="label">Themes analyzed</div><div class="value">${fmt(k.themes)}</div>${deltaLine(k.themes, p?.themes, since, "none")}${spark(series?.themes)}</div>
+    <div class="tile"><div class="label">Authors</div><div class="value">${fmt(k.authors)}</div>${deltaLine(k.authors, p?.authors, since, "none")}${spark(series?.authors)}</div>
+    <div class="tile"><div class="label">Corpus size</div><div class="value">${humanBytes(k.corpusBytes)}</div>${deltaLine(k.corpusBytes, p?.corpusBytes, since, "none", "total store source", humanBytes)}${spark(series?.corpusBytes)}</div>
+    <div class="tile"><div class="label">Cumulative downloads</div><div class="value">${humanCount(k.corpusDownloads)}</div>${deltaLine(k.corpusDownloads, p?.corpusDownloads, since, "none", "lifetime store downloads", humanCount)}${spark(series?.corpusDownloads)}</div>
+    <div class="tile"><div class="label">Deprecated-surface downloads</div><div class="value">${humanCount(k.deprecatedSurfaceDownloads)}</div>${deltaLine(k.deprecatedSurfaceDownloads, p?.deprecatedSurfaceDownloads, since, "down", "installs on removed surfaces", humanCount)}${spark(series?.deprecatedSurfaceDownloads)}</div>
+    <div class="tile"><div class="label">Abandoned share</div><div class="value">${k.abandonedShare.toFixed(1)}%</div>${deltaLine(k.abandonedShare, p?.abandonedShare, since, "none", "no release in over 2 years", n => `${n.toFixed(1)}pp`)}${spark(series?.abandonedShare)}</div>
     <div class="tile"><div class="label">Parse errors</div><div class="value">${fmt(k.parseErrors)}</div><div class="delta${k.parseErrors === 0 ? " good" : ""}">${k.parseErrors === 0 ? "&#10003; full AST coverage" : "plugins skipped"}</div>${spark(series?.parseErrors)}</div>
     <div class="tile"><div class="label">Legacy API uses</div><div class="value">${fmt(k.deprecatedUses)}</div><div class="delta${k.deprecatedUses === 0 ? " good" : ""}">${k.deprecatedUses === 0 ? "&#10003; old-old APIs are gone" : "see bdapi table"}</div>${spark(series?.deprecatedUses)}</div>
-    <div class="tile"><div class="label">Uncalled API members</div><div class="value">${fmt(k.unusedApis)}</div>${deltaLine(k.unusedApis, p?.unusedApis, since, true, `of ${fmt(d.declaredApis)} BdApi declares`)}${spark(series?.unusedApis)}</div>
-    <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(k.requirePlugins)}</div>${deltaLine(k.requirePlugins, p?.requirePlugins, since, true, "plugins on the polyfill")}${spark(series?.requirePlugins)}</div>
-    <div class="tile"><div class="label">Bundled / packed code</div><div class="value">${fmt(k.flagged)}</div>${deltaLine(k.flagged, p?.flagged, since, true, "plugins, by heuristic")}${spark(series?.flagged)}</div>
-    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(k.fragileAddons)}</div>${deltaLine(k.fragileAddons, fragilePrev, since, true, methodologyBreak ? "remote CSS now measured" : "addons breaking on class churn")}${spark(fragileSeries)}</div>
-    <div class="tile"><div class="label">Malformed meta</div><div class="value">${fmt(k.metaProblemAddons)}</div>${deltaLine(k.metaProblemAddons, p?.metaProblemAddons, since, true, "addons with meta problems")}${spark(series?.metaProblemAddons)}</div>
-    <div class="tile"><div class="label">Self-installing</div><div class="value">${fmt(k.selfUpdating)}</div>${deltaLine(k.selfUpdating, p?.selfUpdating, since, true, "plugins writing plugin files")}${spark(series?.selfUpdating)}</div>
+    <div class="tile"><div class="label">Uncalled API members</div><div class="value">${fmt(k.unusedApis)}</div>${deltaLine(k.unusedApis, p?.unusedApis, since, "down", `of ${fmt(d.declaredApis)} BdApi declares`)}${spark(series?.unusedApis)}</div>
+    <div class="tile"><div class="label">Using require()</div><div class="value">${fmt(k.requirePlugins)}</div>${deltaLine(k.requirePlugins, p?.requirePlugins, since, "down", "plugins on the polyfill")}${spark(series?.requirePlugins)}</div>
+    <div class="tile"><div class="label">Bundled / packed code</div><div class="value">${fmt(k.flagged)}</div>${deltaLine(k.flagged, p?.flagged, since, "down", "plugins, by heuristic")}${spark(series?.flagged)}</div>
+    <div class="tile"><div class="label">Hardcoding classes</div><div class="value">${fmt(k.fragileAddons)}</div>${deltaLine(k.fragileAddons, fragilePrev, since, "down", methodologyBreak ? "remote CSS now measured" : "addons breaking on class churn")}${spark(fragileSeries)}</div>
+    <div class="tile"><div class="label">Resilient selectors</div><div class="value">${fmt(k.resilientSelectorAddons)}</div>${deltaLine(k.resilientSelectorAddons, p?.resilientSelectorAddons, since, "up", "addons on substring selectors")}${spark(series?.resilientSelectorAddons)}</div>
+    <div class="tile"><div class="label">Malformed meta</div><div class="value">${fmt(k.metaProblemAddons)}</div>${deltaLine(k.metaProblemAddons, p?.metaProblemAddons, since, "down", "addons with meta problems")}${spark(series?.metaProblemAddons)}</div>
+    <div class="tile"><div class="label">Self-installing</div><div class="value">${fmt(k.selfUpdating)}</div>${deltaLine(k.selfUpdating, p?.selfUpdating, since, "down", "plugins writing plugin files")}${spark(series?.selfUpdating)}</div>
 </div>
 
 <div class="card">
@@ -956,6 +972,7 @@ footer ul { padding-left: 18px; }
     <p class="note">Discord ships hashed CSS classes in two styles &mdash; <code>wrapper_a1b2c3</code> and <code>name__2ea32</code> &mdash; and rehashes them on class churn. Every token counted here is a selector that silently stops matching when that happens; the fix is a class-module lookup such as <code>BdApi.Webpack.getByKeys(&hellip;)</code>. Counts are occurrences, not distinct classes: a vendored class-name map inflates a single addon fast.</p>
     <p class="note"><strong>Remote CSS is now counted.</strong> Most themes are a thin <code>@import</code> wrapper whose real CSS lives on a host like <code>*.github.io</code>; that content is fetched, cached, and analysed here, attributed to the importing theme &mdash; so shared remote CSS imported by N themes counts under each of the N. This lands a one-time jump in these totals versus older snapshots: a measurement change, not the ecosystem regressing, which is why the tile's delta is neutralised for this data date.</p>
     <p class="note">The two columns read differently: <strong>Hardcoded classes</strong> is raw occurrences &mdash; the total blast radius, and the ranking key &mdash; while <strong>per KB</strong> normalizes against analyzed size (store file plus the theme's remote CSS, the same content the tokens were counted over) to show how riddled an addon is regardless of how big it is. A small theme with a handful of hardcoded classes can be denser per KB than a large one that merely vendors a whole class map.</p>
+    <p class="note"><strong>The resilient counterpart within selectors:</strong> <strong>${fmt(d.resilient.themes)}</strong> themes and <strong>${fmt(d.resilient.plugins)}</strong> plugins instead target classes by stable prefix &mdash; attribute-substring selectors (<code>[class*="wrapper_"]</code>, <code>[class^=</code>; ${fmt(d.resilient.selectors)} selectors in all) that match the name and ignore the hash, so they survive rehashing. Counted over the same content as the tables above: store file plus remote <code>@import</code> CSS attributed per importing theme, and for plugins string literals only (embedded CSS and <code>querySelector</code> arguments), never raw JS text. The other class-attribute operators (<code>$=</code>, <code>~=</code>, <code>|=</code>) are deliberately excluded &mdash; in this corpus they are code-block language matching (<code>[class$="python" i]</code>), not churn resilience.</p>
     <div class="cols">
         <div><h2>Themes</h2>${fragileTable(d.fragile.filter(f => f.type === "theme"), "Theme")}</div>
         <div><h2>Plugins</h2>${fragileTable(d.fragile.filter(f => f.type === "plugin"), "Plugin")}</div>

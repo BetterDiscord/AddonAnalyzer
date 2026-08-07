@@ -65,6 +65,11 @@ export interface Kpis {
     // alias. The one download KPI with a direction — down means the migration campaigns are
     // working — so its delta may colour green. Absent on older snapshots; the report degrades.
     deprecatedSurfaceDownloads: number;
+
+    // Addons using >= 1 attribute-substring class selector ([class*= / [class^=) — the
+    // churn-resilient counterpart of fragileAddons, so its delta colours green when RISING
+    // (adoption is the campaign working). Absent on older snapshots; the report degrades.
+    resilientSelectorAddons: number;
 }
 
 export interface Snapshot {
@@ -108,7 +113,8 @@ export function deriveKpis(addons: AddonsJson, summary: SummaryJson, store: Stor
         corpusBytes: Number(asRecord(summary.size).bytes ?? 0),
         corpusDownloads: 0,
         abandonedShare: 0,
-        deprecatedSurfaceDownloads: 0
+        deprecatedSurfaceDownloads: 0,
+        resilientSelectorAddons: 0
     };
 
     let withMeta = 0;
@@ -122,6 +128,7 @@ export function deriveKpis(addons: AddonsJson, summary: SummaryJson, store: Stor
             if (Object.keys(asRecord(results.requires)).length) kpis.requirePlugins++;
             if (results["obfuscated-plugins"] === true) kpis.flagged++;
             if (typeof results["class-literals"] === "number" && results["class-literals"] > 0) kpis.fragileAddons++;
+            if (typeof results["substring-selectors"] === "number" && results["substring-selectors"] > 0) kpis.resilientSelectorAddons++;
             if (Object.keys(asRecord(results["meta-problems"])).length) kpis.metaProblemAddons++;
             if (results["self-updating"] === true) kpis.selfUpdating++;
 
