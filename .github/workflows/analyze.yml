@@ -44,8 +44,11 @@ jobs:
 
       # On a cache miss this downloads the full corpus AND fetches every theme's remote
       # @import graph into .cache/imports (both covered by the cache above). On a cache
-      # hit the run is offline: updateImports() is gated on the corpus dataDate. A
-      # store-API hiccup fails the run; rerun via workflow_dispatch or wait a week.
+      # hit the run is offline apart from retrying any addon that failed to download:
+      # updateImports() is gated on the corpus dataDate, and fillGaps() only touches the
+      # sources with no copy on disk. A dead addon source is annotated, not fatal, until
+      # more than min(5, 2%) are missing; only a store-list failure fails the run outright
+      # (rerun via workflow_dispatch or wait a week).
       - run: bun run analyze
 
       # With the corpus cached, a mid-week push produces the same snapshot and this
