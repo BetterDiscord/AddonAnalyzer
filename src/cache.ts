@@ -9,15 +9,24 @@ const addonCacheJson = path.join(cacheFolder, "addons.json");
 const cacheMetaJson = path.join(cacheFolder, "meta.json");
 
 
-// A source URL that could not be fetched. `kept` separates the harmless case — a copy from a
-// previous run is still on disk, so the addon stays in the corpus with possibly stale content —
-// from a real hole in the denominator: no copy at all, so the addon is absent from every count
-// the report publishes. Only the second kind counts against the tolerance below.
+// A source URL that could not be fetched. Two flags carry the whole policy:
+//
+// `kept` separates the harmless case — a copy from a previous run is still on disk, so the addon
+// stays in the corpus with possibly stale content — from a real hole in the denominator: no copy
+// at all, so the addon is absent from every count the report publishes. Only the second kind
+// counts against the tolerances below.
+//
+// `permanent` separates a source that is *gone* (404/410, or a listing with no URL at all) from a
+// transport fault. Evidence for the split, 2026-08-10: ten addons across two authors 404'd because
+// both authors' repositories were deleted outright — those URLs will 404 next week and the week
+// after, so failing the run over them means never publishing again, while a burst of timeouts
+// means this run's corpus is not representative and a re-run genuinely fixes it.
 export interface DownloadFailure {
     addon: string; // "<author dir>/<file_name>", the key results/addons.json and storeMetaKey use
     url: string;
     reason: string;
     kept: boolean;
+    permanent: boolean;
 }
 
 interface Metadata {
@@ -39,12 +48,21 @@ const RETRY_BACKOFF = 500;
 // losing a third of its addons overnight — see fetchStoreList.
 const MIN_LIST_RATIO = 0.5;
 
-// Corpus gaps tolerated before the run refuses to publish (maintainer's call, 2026-08): fail when
-// missing exceeds *either* bound, i.e. the stricter of the two. A suspended GitHub account costs
-// one addon per week rather than a month of no data at all, but a broad outage is a data failure
-// a human must look at, not a report quietly measuring a corpus with a chunk taken out of it.
-const MAX_MISSING = 5;
-const MAX_MISSING_SHARE = 0.02;
+// Corpus gaps tolerated before the run refuses to publish (maintainer's call, 2026-08), per
+// failure class and counting only addons with no copy on disk. Each pair fails when the count
+// exceeds *either* bound, i.e. the stricter of the two.
+//
+// Permanent: generous, because failing changes nothing — a deleted repository answers 404 every
+// week, so a strict bound here means the report simply stops publishing until the store delists
+// the addon. The bound still exists to catch a mass-404 event (a CDN serving 404 for everything),
+// which is a different thing wearing the same status code.
+const MAX_GONE = 25;
+const MAX_GONE_SHARE = 0.08;
+
+// Transport: strict, because the corpus is only as good as the run that fetched it. A burst of
+// timeouts means these numbers are an artifact of one bad ten minutes, and a re-run fixes it.
+const MAX_UNREACHABLE = 5;
+const MAX_UNREACHABLE_SHARE = 0.02;
 
 async function exists(location: string) {
     try {
@@ -85,6 +103,14 @@ function isRetryable(error: unknown): boolean {
         return status === 408 || status === 429 || status >= 500;
     }
     return true; // timeouts, DNS failures, socket resets, an HTML error page failing to parse
+}
+
+// The source is gone rather than unreachable: 404 (deleted or renamed repo, force-pushed commit,
+// suspended account) and 410. Deliberately NOT 403 — raw.githubusercontent answers 404 for private
+// and deleted content, so a 403 there is rate limiting, which is a transport fault that clears.
+function isPermanent(error: unknown): boolean {
+    if (!(error instanceof HTTPError)) return false;
+    return error.response.status === 404 || error.response.status === 410;
 }
 
 async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
@@ -193,11 +219,50 @@ async function refresh(): Promise<void> {
         if (failure) failures.push(failure);
     }
 
+    await pruneOrphans(addons);
+
     // Written before the tolerance check on purpose: a run that fails there has still done the
     // downloading, so a rerun can fill the gaps instead of re-fetching the whole corpus. CI never
     // sees that path — actions/cache does not save on a failed job — but a local rerun does.
     await writeMeta({lastUpdated: new Date().toISOString(), count: addons.length, failures});
     reportFailures(failures, addons.length);
+}
+
+// Delete corpus files the store no longer lists. Without this an addon delisted mid-week is
+// analyzed forever: nothing else ever removes a file, and CI now restores the previous week's
+// corpus rather than starting empty, so it is no longer immune the way a from-scratch download was.
+//
+// Only ever called from refresh(), i.e. only after fetchStoreList() has vetted the response. That
+// gating is the whole safety story — a truncated store payload reaching this function is a mass
+// delete. Files that merely failed to download are still *listed*, so they are never orphans.
+async function pruneOrphans(addons: APIAddon[]): Promise<void> {
+    const listed = new Set(addons.map(addonKey));
+    let removed = 0;
+
+    for (const author of await fs.readdir(addonFolder)) {
+        const authorPath = path.join(addonFolder, author);
+        if (!(await fs.stat(authorPath)).isDirectory()) continue;
+
+        const entries = await fs.readdir(authorPath);
+        for (const entry of entries) {
+            // Anything that is not an addon file was not put here by this pipeline — leave it alone
+            if (!entry.endsWith(".plugin.js") && !entry.endsWith(".theme.css")) continue;
+            if (listed.has(`${author}/${entry}`)) continue;
+            await fs.rm(path.join(authorPath, entry));
+            console.log(`pruned ${author}/${entry} (no longer in the store)`);
+            removed++;
+        }
+
+        // An author whose every addon was delisted must lose the directory too: analyze() keys
+        // results by directory, so an empty one becomes an author with no addons and inflates the
+        // author count.
+        if (!(await fs.readdir(authorPath)).length) {
+            await fs.rmdir(authorPath);
+            console.log(`pruned empty author folder ${author}`);
+        }
+    }
+
+    if (removed) console.log(`pruned ${removed} delisted addon(s) from the corpus`);
 }
 
 // A corpus stays fresh for the whole ISO week, so an addon that failed to download on Monday
@@ -250,8 +315,9 @@ async function downloadAddon(addon: APIAddon): Promise<DownloadFailure | null> {
     const sourceUrl = addon.latest_source_url;
 
     // A listing with no source URL is a store-data problem rather than a transport one, but it
-    // lands in the same place — no file on disk — so it is recorded the same way.
-    if (!sourceUrl) return {addon: addonKey(addon), url: "", reason: "no source URL in the store listing", kept: await exists(file)};
+    // lands in the same place — no file on disk — and no re-run will conjure a URL, so it is
+    // recorded the same way a deleted repository is.
+    if (!sourceUrl) return {addon: addonKey(addon), url: "", reason: "no source URL in the store listing", kept: await exists(file), permanent: true};
 
     const downloadUrl = sourceUrl.replace("github.com", "raw.githubusercontent.com").replace("blob/", "");
     try {
@@ -264,12 +330,12 @@ async function downloadAddon(addon: APIAddon): Promise<DownloadFailure | null> {
         return null;
     }
     catch (error) {
-        return {addon: addonKey(addon), url: downloadUrl, reason: describeError(error), kept: await exists(file)};
+        return {addon: addonKey(addon), url: downloadUrl, reason: describeError(error), kept: await exists(file), permanent: isPermanent(error)};
     }
 }
 
 // Every failure is logged — a silent skip is the failure mode this whole path exists to prevent —
-// and a corpus missing more than the tolerance stops being a measurement, so it throws.
+// and a corpus missing more than its class's tolerance stops being a measurement, so it throws.
 function reportFailures(failures: DownloadFailure[], count: number): void {
     const missing = failures.filter(entry => !entry.kept);
     const kept = failures.length - missing.length;
@@ -282,8 +348,15 @@ function reportFailures(failures: DownloadFailure[], count: number): void {
     }
 
     if (!missing.length) return;
-    const limit = Math.min(MAX_MISSING, Math.floor(count * MAX_MISSING_SHARE));
-    if (missing.length > limit) {
-        throw new Error(`${missing.length} of ${count} store addons could not be downloaded (tolerance ${limit}) — refusing to analyze a corpus this incomplete`);
+    const gone = missing.filter(entry => entry.permanent).length;
+    const unreachable = missing.length - gone;
+    const goneLimit = Math.min(MAX_GONE, Math.floor(count * MAX_GONE_SHARE));
+    const unreachableLimit = Math.min(MAX_UNREACHABLE, Math.floor(count * MAX_UNREACHABLE_SHARE));
+
+    if (gone > goneLimit) {
+        throw new Error(`${gone} of ${count} store addons no longer exist at their source URL (tolerance ${goneLimit}) — too much of the corpus is gone to analyze; check whether the store listing has gone stale or the host is serving 404 for everything`);
+    }
+    if (unreachable > unreachableLimit) {
+        throw new Error(`${unreachable} of ${count} store addons could not be reached (tolerance ${unreachableLimit}) — this run's corpus is an artifact of a bad connection rather than a measurement; re-run`);
     }
 }

@@ -804,8 +804,17 @@ function gapNote(d: ReportData): string {
     if (missing.length) {
         sentences.push(`<strong>Incomplete corpus:</strong> ${fmt(missing.length)} store addon${missing.length === 1 ? "" : "s"} could not be downloaded for this data week and ${missing.length === 1 ? "is" : "are"} absent from every count below &mdash; ${list(missing)}. The trend snapshot records the gap, so a dip here is traceable to it.`);
     }
-    if (stale.length) {
-        sentences.push(`${fmt(stale.length)} addon${stale.length === 1 ? "'s source" : "s' sources"} could not be refreshed and ${stale.length === 1 ? "was" : "were"} analyzed from an earlier copy &mdash; ${list(stale)}.`);
+
+    // A stale copy whose source is *gone* will never refresh on its own — that is a store listing
+    // to fix, not weather to wait out, so it gets its own sentence rather than being pooled with
+    // the ordinary "try again next week" case.
+    const dead = stale.filter(entry => entry.permanent);
+    const transient = stale.filter(entry => !entry.permanent);
+    if (dead.length) {
+        sentences.push(`${fmt(dead.length)} addon${dead.length === 1 ? "'s source no longer exists" : "s' sources no longer exist"} and ${dead.length === 1 ? "was" : "were"} analyzed from the last good copy &mdash; ${list(dead)}. ${dead.length === 1 ? "It" : "They"} will not refresh again until the store listing is updated.`);
+    }
+    if (transient.length) {
+        sentences.push(`${fmt(transient.length)} addon${transient.length === 1 ? "'s source" : "s' sources"} could not be reached this run and ${transient.length === 1 ? "was" : "were"} analyzed from an earlier copy &mdash; ${list(transient)}.`);
     }
     if (priorGap) {
         sentences.push(`The ${escapeHtml(d.previous?.dataDate ?? "previous")} snapshot every &Delta; compares against was itself missing ${fmt(priorGap)} addon${priorGap === 1 ? "" : "s"}, so small deltas may be recovery rather than change.`);
