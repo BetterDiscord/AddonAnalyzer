@@ -37,10 +37,18 @@ jobs:
         id: week
         run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
 
+      # restore-keys makes a new week start from the newest previous corpus instead of an empty
+      # directory. The run still refreshes everything (the week key changed, so isInvalid() is
+      # true) — the difference is only what happens when a source URL is dead: with last week's
+      # file present the addon degrades to stale content, without it the addon vanishes from the
+      # corpus entirely. Ten addons were in exactly that state on 2026-08-10 (two authors deleted
+      # their repos), which a from-scratch CI download would have turned into a 10-addon hole.
+      # This is what makes pruneOrphans() necessary: delisted addons now arrive here too.
       - uses: actions/cache@v4
         with:
           path: .cache
           key: addon-corpus-${{ steps.week.outputs.week }}
+          restore-keys: addon-corpus-
 
       # On a cache miss this downloads the full corpus AND fetches every theme's remote
       # @import graph into .cache/imports (both covered by the cache above). On a cache
