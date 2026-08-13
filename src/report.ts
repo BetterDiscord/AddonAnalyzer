@@ -6,7 +6,7 @@ import {isHazardMethod} from "./ast/rules/reacthazards";
 import {cacheFolder, resultsFolder} from "./constants";
 import {discordVarCount, discordVarSource, isDiscordVariable} from "./discordvars";
 import {DYNAMIC_SEGMENT} from "./evaluator/strings";
-import {weekStart} from "./cache";
+import {readDownloadFailures, weekStart, type DownloadFailure} from "./cache";
 import {deriveKpis, METHODOLOGY, readHistory, type AddonsJson, type Kpis, type Snapshot, type SummaryJson} from "./history";
 import {loadStoreMeta, monthsBetween, stalenessBucket, storeMetaKey, type Staleness} from "./storemeta";
 import {declaredPaths, surface, unusedPaths} from "./surface";
@@ -64,6 +64,11 @@ interface ReportData {
     // Oldest-first KPI series for tile sparklines; null until >= 3 snapshots exist
     kpiSeries: Record<keyof Kpis, number[]> | null;
     corpus: number;
+
+    // Store sources that failed to download for this data week (cache.ts owns the distinction):
+    // `kept: false` addons are absent from every number on the page, `kept: true` ones were
+    // analyzed from an earlier copy. Empty on a healthy run — the note renders only when it isn't.
+    downloadFailures: DownloadFailure[];
     metaFields: Array<{field: string, addons: number, known: boolean, required: boolean}>;
     metaProblems: Array<{problem: string, field: string, addons: string[]}>;
     selfUpdaters: string[];
@@ -470,6 +475,7 @@ async function assemble(): Promise<ReportData> {
         previous,
         kpiSeries,
         corpus: plugins + themes,
+        downloadFailures: await readDownloadFailures(),
         metaFields: [...metaFieldAddons.entries()]
             .map(([field, count]) => ({field, addons: count, known: isKnownField(field), required: isRequiredField(field)}))
             .sort((a, b) => b.addons - a.addons),
@@ -782,6 +788,40 @@ function lifecycleTable(rows: ReportData["lifecycle"]): string {
     return `<table><thead><tr><th>Member</th><th>Status</th><th></th><th class="num">Plugins defining it</th><th class="num">Downloads</th></tr></thead><tbody>${rows.map(row).join("")}</tbody></table>`;
 }
 
+// Corpus gaps qualify every number on the page, so the note sits above the tiles rather than in a
+// card. Deliberately uncoloured — the palette has no red (see the delta-colouring rule) and the
+// point is disclosure, not alarm. Renders nothing on a complete corpus, the normal case.
+function gapNote(d: ReportData): string {
+    const missing = d.downloadFailures.filter(entry => !entry.kept);
+    const stale = d.downloadFailures.filter(entry => entry.kept);
+    const priorGap = d.previous?.missingAddons ?? 0;
+    if (!missing.length && !stale.length && !priorGap) return "";
+
+    const list = (entries: DownloadFailure[]) =>
+        entries.map(entry => `<code>${escapeHtml(entry.addon)}</code> (${escapeHtml(entry.reason)})`).join(", ");
+
+    const sentences: string[] = [];
+    if (missing.length) {
+        sentences.push(`<strong>Incomplete corpus:</strong> ${fmt(missing.length)} store addon${missing.length === 1 ? "" : "s"} could not be downloaded for this data week and ${missing.length === 1 ? "is" : "are"} absent from every count below &mdash; ${list(missing)}. The trend snapshot records the gap, so a dip here is traceable to it.`);
+    }
+
+    // A stale copy whose source is *gone* will never refresh on its own — that is a store listing
+    // to fix, not weather to wait out, so it gets its own sentence rather than being pooled with
+    // the ordinary "try again next week" case.
+    const dead = stale.filter(entry => entry.permanent);
+    const transient = stale.filter(entry => !entry.permanent);
+    if (dead.length) {
+        sentences.push(`${fmt(dead.length)} addon${dead.length === 1 ? "'s source no longer exists" : "s' sources no longer exist"} and ${dead.length === 1 ? "was" : "were"} analyzed from the last good copy &mdash; ${list(dead)}. ${dead.length === 1 ? "It" : "They"} will not refresh again until the store listing is updated.`);
+    }
+    if (transient.length) {
+        sentences.push(`${fmt(transient.length)} addon${transient.length === 1 ? "'s source" : "s' sources"} could not be reached this run and ${transient.length === 1 ? "was" : "were"} analyzed from an earlier copy &mdash; ${list(transient)}.`);
+    }
+    if (priorGap) {
+        sentences.push(`The ${escapeHtml(d.previous?.dataDate ?? "previous")} snapshot every &Delta; compares against was itself missing ${fmt(priorGap)} addon${priorGap === 1 ? "" : "s"}, so small deltas may be recovery rather than change.`);
+    }
+    return `<p class="gap">${sentences.join(" ")}</p>`;
+}
+
 function render(d: ReportData): string {
     const k = d.kpis;
     const series = d.kpiSeries;
@@ -835,6 +875,7 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 h2 { font-size: 16px; margin: 0 0 2px; }
 .sub { color: var(--ink-2); font-size: 13px; margin: 0 0 24px; }
 .note { color: var(--ink-2); font-size: 13px; margin: 2px 0 14px; }
+.gap { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 14px; margin: 0 0 20px; color: var(--ink-2); font-size: 13px; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
 .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
 .tile .label { font-size: 12px; color: var(--ink-2); }
@@ -871,7 +912,7 @@ footer ul { padding-left: 18px; }
 <div class="wrap">
 <h1>BetterDiscord Addon Analysis</h1>
 <p class="sub">Official store corpus &middot; report generated ${d.generated} &middot; addon data updated ${d.dataDate}</p>
-
+${gapNote(d)}
 <div class="kpis">
     <div class="tile"><div class="label">Plugins analyzed</div><div class="value">${fmt(k.plugins)}</div>${deltaLine(k.plugins, p?.plugins, since, "none")}${spark(series?.plugins)}</div>
     <div class="tile"><div class="label">Themes analyzed</div><div class="value">${fmt(k.themes)}</div>${deltaLine(k.themes, p?.themes, since, "none")}${spark(series?.themes)}</div>

@@ -1,7 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import {lifecycleStatus} from "./ast/rules/lifecycle";
-import {weekStart} from "./cache";
+import {readDownloadFailures, weekStart} from "./cache";
 import {cacheFolder, historyFolder, resultsFolder} from "./constants";
 import {loadStoreMeta, stalenessBucket, storeMetaKey, type StoreMetaMap} from "./storemeta";
 import {unusedPaths} from "./surface";
@@ -84,6 +84,13 @@ export interface Snapshot {
     // Measurement-methodology version this snapshot was produced under (see METHODOLOGY). Absent on
     // snapshots written before the field existed; readers treat missing as 1.
     methodology?: number;
+
+    // Store addons that could not be downloaded for this data week and are therefore absent from
+    // every number below (cache.ts records them; `kept` failures are excluded — a stale copy is
+    // still counted). Absent on a complete corpus, which is the normal case. Recorded for the same
+    // defensive reason as `methodology`: a dip caused by a download outage must stay traceable to
+    // one instead of reading, years later, as an ecosystem change.
+    missingAddons?: number;
 
     kpis: Kpis;
     summary: SummaryJson;
@@ -172,6 +179,10 @@ export async function writeSnapshot(): Promise<Snapshot> {
         summary
     };
 
+    // Only failures with no copy on disk shift the numbers; a kept stale copy is still analyzed
+    const missingAddons = (await readDownloadFailures()).filter(entry => !entry.kept).length;
+    if (missingAddons) snapshot.missingAddons = missingAddons;
+
     await fs.mkdir(historyFolder, {recursive: true});
     const file = path.join(historyFolder, `${snapshot.dataDate}.json`);
 
@@ -180,6 +191,7 @@ export async function writeSnapshot(): Promise<Snapshot> {
     try {
         const existing = JSON.parse(await fs.readFile(file, "utf8")) as Snapshot;
         if ((existing.methodology ?? 1) === snapshot.methodology
+            && (existing.missingAddons ?? 0) === missingAddons
             && JSON.stringify([existing.kpis, existing.summary]) === JSON.stringify([snapshot.kpis, snapshot.summary])) {
             return existing;
         }
